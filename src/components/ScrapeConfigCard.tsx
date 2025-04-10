@@ -24,14 +24,19 @@ const ScrapeConfigCard = ({
 }: ScrapeConfigCardProps) => {
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleScrape = () => {
+  const handleScrape = async () => {
     setIsLoading(true);
-    // Simulate a scrape operation
-    setTimeout(() => {
-      setIsLoading(false);
+    
+    try {
+      // Call the scrape function
+      await onScrape();
       toast.success(`Started scraping ${title}`);
-      onScrape();
-    }, 1500);
+    } catch (error) {
+      console.error(`Error scraping ${title}:`, error);
+      toast.error(`Error starting ${title} scraper: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

@@ -1,19 +1,17 @@
 
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "althingi-data-miner"
+project_id = "gyrwkzowptobmfsavvij"
 
 [api]
-enabled = true
 # Port to use for the API URL.
 port = 54321
 # Schemas to expose in your API. Tables, views and stored procedures in this schema will get API
 # endpoints. public and storage are always included.
-schemas = ["public", "storage"]
+schemas = ["public", "storage", "graphql_public"]
 # Extra schemas to add to the search_path of every request. public is always included.
 extra_search_path = ["public", "extensions"]
-# Maximum rows returns from a view, table, or stored procedure. Limits payload size for accidental
-# or malicious requests.
+# Maximum rows returns in a single REST request.
 max_rows = 1000
 
 [db]
@@ -22,31 +20,23 @@ port = 54322
 # Port used by db diff command to initialize the shadow database.
 shadow_port = 54320
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
-# server_version;` on the remote database to check.
+# server_version` on the remote database to check.
 major_version = 15
 
 [db.pooler]
 enabled = false
-# Port to use for the local connection pooler.
 port = 54329
-# Maximum number of connections to maintain with the database. Keep this smaller than your
-# actual database connection limit.
-pool_size = 50
-# Maximum number of connections to keep idle in the pool.
-# This defaults to 20% of pool_size.
 pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
 
 [realtime]
 enabled = true
-# Bind realtime to this local address.
-bind = "0.0.0.0"
-# Port to use for the realtime websocket server.
-port = 54323
 
 [studio]
 enabled = true
 # Port to use for Supabase Studio.
-port = 54324
+port = 54323
 # External URL of the API server that frontend connects to.
 api_url = "http://localhost"
 
@@ -55,10 +45,15 @@ api_url = "http://localhost"
 [inbucket]
 enabled = true
 # Port to use for the email testing server web interface.
-port = 54325
+port = 54324
 # Uncomment to expose additional ports for testing user applications that send emails.
-# smtp_port = 54326
-# pop3_port = 54327
+# smtp_port = 54325
+# pop3_port = 54326
+
+[storage]
+enabled = true
+# The maximum file size allowed (e.g. "5MB", "500KB").
+file_size_limit = "50MiB"
 
 [auth]
 enabled = true
@@ -69,7 +64,16 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = ["https://localhost:3000"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
+# If disabled, the refresh token will never expire.
+enable_refresh_token_rotation = true
+# Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
+# Requires enable_refresh_token_rotation = true.
+refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project.
+enable_signup = true
+
+[auth.email]
+# Allow/disallow new user signups via email to your project.
 enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
@@ -77,240 +81,24 @@ double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
 
-[auth.email]
-# Allow/disallow new user signups via email to your project.
-enable_signup = true
-# If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
-
-[auth.sms]
-# Allow/disallow new user signups via SMS to your project.
-enable_signup = true
-# If enabled, users need to confirm their phone number before signing in.
-enable_confirmations = false
-
-[auth.sms.twilio]
-enabled = false
-# account_sid = ""
-# auth_token = ""
-# sender_number = ""
-# message_service_sid = ""
-
-[auth.sms.messagebird]
-enabled = false
-# access_key = ""
-# originator = ""
-
-[auth.sms.textlocal]
-enabled = false
-# api_key = ""
-# sender = ""
-
-[auth.sms.vonage]
-enabled = false
-# api_key = ""
-# api_secret = ""
-# from = ""
-
+# Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
+# `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin`, `notion`, `twitch`,
+# `twitter`, `slack`, `spotify`, `workos`, `zoom`.
 [auth.external.apple]
 enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from apple. Note: `name` and `email` are always requested.
-# scopes = []
-# Overrides the default apple redirect uri, which is the site_url
-# redirect_uri = ""
+client_id = ""
+secret = ""
+# Set `redirect_to_provider = false` to redirect to app directly (or when using implicit grant)
+redirect_to_provider = true
+# Overrides the default auth redirectUrl.
+redirect_url = ""
+# Overrides the default auth provider URL. Used to support self-hosted gitlab, single-tenant Azure,
+# or any other third-party OIDC providers.
+url = ""
 
-[auth.external.azure]
+[analytics]
 enabled = false
-# client_id = ""
-# secret = ""
-# The Azure Active Directory tenant the application is registered with.
-# tenant = "common"
-# Additional scopes to request from azure. Note: `openid`, `profile`, and `email` are always requested.
-# scopes = []
-# Overrides the default azure redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.azuread]
-enabled = false
-# client_id = ""
-# secret = ""
-# The Azure Active Directory tenant the application is registered with.
-# tenant = "common"
-# Additional scopes to request from azure. Note: `openid`, `profile`, and `email` are always requested.
-# scopes = []
-# Overrides the default azure redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.bitbucket]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from bitbucket. Note: `account` and `email` are always requested.
-# scopes = []
-# Overrides the default bitbucket redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.discord]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from discord. Note: `identify` and `email` are always requested.
-# scopes = []
-# Overrides the default discord redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.facebook]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from facebook. Note: `email` is always requested.
-# scopes = []
-# Overrides the default facebook redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.github]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from github. Note: `user:email` is always requested.
-# scopes = []
-# Overrides the default github redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.gitlab]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from gitlab. Note: `read_user` is always requested.
-# scopes = []
-# Overrides the default gitlab redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.google]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from google. Note: `email` and `profile` are always requested.
-# scopes = []
-# Overrides the default google redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.kakao]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from kakao. Note: `account_email` is always requested.
-# scopes = []
-# Overrides the default kakao redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.keycloak]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from keycloak. Note: `openid`, `profile`, and `email` are always requested.
-# scopes = []
-# Base URL of your keycloak instance.
-# url = ""
-# Overrides the default keycloak redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.linkedin]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from linkedin. Note: `r_liteprofile` and `r_emailaddress` are always requested.
-# scopes = []
-# Overrides the default linkedin redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.notion]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from notion. Note: `email` is always requested.
-# scopes = []
-# Overrides the default notion redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.twitch]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from twitch. Note: `user:read:email` is always requested.
-# scopes = []
-# Overrides the default twitch redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.twitter]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from twitter.
-# scopes = []
-# Overrides the default twitter redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.spotify]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from spotify.
-# scopes = []
-# Overrides the default spotify redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.slack]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from slack.
-# scopes = []
-# Overrides the default slack redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.workos]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from workos.
-# scopes = []
-# The connection to use for workos.
-# connection = ""
-# Overrides the default workos redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.zoom]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from zoom.
-# scopes = []
-# Overrides the default zoom redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.oidc]
-enabled = false
-# client_id = ""
-# secret = ""
-# Additional scopes to request from oidc.
-# scopes = []
-# The oidc issuer url.
-# issuer_url = ""
-# Overrides the default oidc redirect uri, which is the site_url
-# redirect_uri = ""
-
-[auth.external.oidc.service_accounts]
-# Uncomment to configure service account for oidc.
-# service_account_key_file = "foo.json"
-
-[functions]
-enabled = true
-port = 54328
-
-[experimental]
-# The experimental features enabled/disabled for your project.
-# Go to https://supabase.com/docs/guides/getting-started/features#experimental for more information.
-features = []
+port = 54327
+vector_port = 54328
+# Configure one of these backends
+backend = "postgres" # or "clickhouse"

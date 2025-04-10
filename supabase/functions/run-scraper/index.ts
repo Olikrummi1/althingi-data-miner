@@ -8,6 +8,12 @@ const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+// Cors headers for CORS support
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 // Mock implementation of a scraper
 async function scrapeData(type: string, config: any) {
   console.log(`Scraping data type: ${type} with config:`, config);
@@ -27,13 +33,64 @@ async function scrapeData(type: string, config: any) {
 }
 
 serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { 
+      status: 204, 
+      headers: corsHeaders 
+    });
+  }
+
   try {
-    const { type, jobId, config } = await req.json();
+    // Check for empty request body
+    const contentLength = req.headers.get('content-length');
+    if (!contentLength || parseInt(contentLength) === 0) {
+      return new Response(
+        JSON.stringify({ error: "Empty request body" }),
+        { 
+          status: 400, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
+      );
+    }
+
+    // Parse request body with error handling
+    let requestData;
+    try {
+      const bodyText = await req.text();
+      if (!bodyText) {
+        throw new Error("Empty request body");
+      }
+      requestData = JSON.parse(bodyText);
+    } catch (error) {
+      console.error("Error parsing request body:", error);
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON in request body" }),
+        { 
+          status: 400, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
+      );
+    }
+
+    const { type, jobId, config } = requestData;
     
     if (!type || !jobId) {
       return new Response(
-        JSON.stringify({ error: "Missing required parameters" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ error: "Missing required parameters (type or jobId)" }),
+        { 
+          status: 400, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
       );
     }
     
@@ -79,7 +136,13 @@ serve(async (req) => {
       
       return new Response(
         JSON.stringify({ success: true, items: scrapedItems.length }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        { 
+          status: 200, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
       );
     } catch (error) {
       console.error("Scraping error:", error);
@@ -96,14 +159,26 @@ serve(async (req) => {
       
       return new Response(
         JSON.stringify({ error: error.message }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
+        { 
+          status: 500, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
       );
     }
   } catch (error) {
     console.error("Server error:", error);
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { 
+        status: 500, 
+        headers: { 
+          "Content-Type": "application/json",
+          ...corsHeaders
+        } 
+      }
     );
   }
 });

@@ -55,13 +55,22 @@ const ScraperPage = () => {
   
   const [isRunningAll, setIsRunningAll] = useState(false);
   const [settings, setSettings] = useState<any>(null);
+  const [isSettingsLoading, setIsSettingsLoading] = useState(true);
 
   // Load scrape settings
   useEffect(() => {
     const loadSettings = async () => {
-      const settings = await getScrapeSettings();
-      if (settings) {
-        setSettings(settings);
+      setIsSettingsLoading(true);
+      try {
+        const settings = await getScrapeSettings();
+        if (settings) {
+          setSettings(settings);
+        }
+      } catch (error) {
+        console.error("Error loading settings:", error);
+        toast.error("Failed to load scraper settings");
+      } finally {
+        setIsSettingsLoading(false);
       }
     };
     
@@ -81,16 +90,20 @@ const ScraperPage = () => {
       return;
     }
     
-    // Create a scrape job in the database
-    const job = await createScrapeJob(id as any, {
-      url: `https://althingi.is/${id}`,
-      depth: 2,
-      ...settings
-    });
-    
-    if (job) {
+    try {
+      // Create a scrape job in the database
+      const job = await createScrapeJob(id as any, {
+        url: `https://althingi.is/${id}`,
+        depth: 2,
+        ...settings
+      });
+      
+      if (!job) {
+        throw new Error("Failed to create scrape job");
+      }
+      
       // Call the edge function to start scraping
-      const { error } = await supabase.functions.invoke("run-scraper", {
+      const { data, error } = await supabase.functions.invoke("run-scraper", {
         body: { 
           type: id, 
           jobId: job.id,
@@ -100,8 +113,13 @@ const ScraperPage = () => {
       
       if (error) {
         console.error("Error invoking scraper function:", error);
-        toast.error(`Error starting scraper: ${error.message}`);
+        throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
       }
+      
+      return data;
+    } catch (error) {
+      console.error("Error invoking scraper function:", error);
+      throw error;
     }
   };
 
@@ -120,14 +138,43 @@ const ScraperPage = () => {
     setIsRunningAll(true);
     toast.success(`Started scraping ${enabledCount} data categories`);
     
+    let successCount = 0;
+    let errorCount = 0;
+    
     // Run each enabled scraper
     for (const id of enabledScraperIds) {
-      await handleScrape(id);
+      try {
+        await handleScrape(id);
+        successCount++;
+      } catch (error) {
+        console.error(`Error scraping ${id}:`, error);
+        errorCount++;
+      }
     }
     
     setIsRunningAll(false);
-    toast.success("All scraping tasks completed");
+    
+    if (errorCount === 0) {
+      toast.success("All scraping tasks completed successfully");
+    } else if (successCount === 0) {
+      toast.error("All scraping tasks failed");
+    } else {
+      toast.warning(`${successCount} scraping tasks completed, ${errorCount} failed`);
+    }
   };
+
+  if (isSettingsLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="container mx-auto py-6 px-4">
+          <div className="flex items-center justify-center h-[70vh]">
+            <p className="text-lg text-gray-500">{t('loading')}</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -138,7 +185,7 @@ const ScraperPage = () => {
           <h2 className="text-2xl font-bold">{t('configureScraper')}</h2>
           <Button 
             onClick={runAllEnabled} 
-            disabled={isRunningAll}
+            disabled={isRunningAll || isSettingsLoading}
             className="bg-althingi-blue hover:bg-althingi-darkBlue"
           >
             {isRunningAll ? t('runningAll') : t('runAllEnabled')}
