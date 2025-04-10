@@ -167,35 +167,43 @@ export default function useScraper() {
         throw new Error("Failed to create scrape job");
       }
       
-      const { data, error } = await supabase.functions.invoke("run-scraper", {
-        body: { 
-          type: id, 
-          jobId: job.id,
-          config: {
-            ...settings,
-            url: config.url,
-            depth: config.depth
+      try {
+        const { data, error } = await supabase.functions.invoke("run-scraper", {
+          body: { 
+            type: id, 
+            jobId: job.id,
+            config: {
+              ...settings,
+              url: config.url,
+              depth: config.depth
+            }
           }
+        });
+        
+        if (error) {
+          console.error("Error invoking scraper function:", error);
+          await updateScrapeJobStatus(job.id, "failed", 0, `Failed to send a request to the Edge Function: ${error.message}`);
+          throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
         }
-      });
-      
-      if (error) {
+        
+        setActiveJobs(prev => ({
+          ...prev,
+          [id]: { 
+            ...job,
+            status: "running"
+          } as ActiveJob
+        }));
+        
+        toast.success(`Started scraping ${id}`);
+        return data;
+      } catch (error: any) {
         console.error("Error invoking scraper function:", error);
-        throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
+        await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
+        throw error;
       }
-      
-      setActiveJobs(prev => ({
-        ...prev,
-        [id]: { 
-          ...job,
-          status: "running"
-        } as ActiveJob
-      }));
-      
-      toast.success(`Started scraping ${id}`);
-      return data;
-    } catch (error) {
-      console.error("Error invoking scraper function:", error);
+    } catch (error: any) {
+      console.error(`Error scraping ${id}:`, error);
+      toast.error(`Error starting ${id} scraper: ${error.message || "Unknown error"}`);
       throw error;
     }
   };

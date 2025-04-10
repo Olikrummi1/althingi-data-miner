@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Database } from "@/integrations/supabase/types";
@@ -102,5 +101,26 @@ export async function getLastScrapedDate(): Promise<string | null> {
   } catch (error) {
     console.error("Error in getLastScrapedDate:", error);
     return null;
+  }
+}
+
+export async function purgeScrapedItems(): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from("scraped_items")
+      .delete()
+      .not("id", "is", null); // This will delete all records
+    
+    if (error) {
+      console.error("Error purging scraped items:", error);
+      toast.error("Failed to purge scraped items");
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Error in purgeScrapedItems:", error);
+    toast.error("Failed to purge scraped items");
+    return false;
   }
 }

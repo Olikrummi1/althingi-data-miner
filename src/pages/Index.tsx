@@ -9,45 +9,70 @@ import {
   getRecentItems, 
   getItemCountsByType, 
   getTotalItemsCount, 
-  getLastScrapedDate
+  getLastScrapedDate,
+  purgeScrapedItems
 } from "@/services/scrapedItemsService";
 import { getLatestScrapeJob, getScrapingSpeed } from "@/services/scrapeJobsService";
 import { format } from "date-fns";
 import { type RecentItem } from "@/components/RecentItemsList";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 const Index = () => {
   const { t } = useLanguage();
   const [scrapeStatus, setScrapeStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
+  const [isPurging, setIsPurging] = useState(false);
   
-  // Fetch recent items
-  const { data: recentItems = [] } = useQuery({
+  // Fetch recent items with refetch interval
+  const { 
+    data: recentItems = [], 
+    refetch: refetchRecentItems
+  } = useQuery({
     queryKey: ['recentItems'],
-    queryFn: () => getRecentItems(7)
+    queryFn: () => getRecentItems(7),
+    refetchInterval: 10000  // Refetch every 10 seconds
   });
   
-  // Fetch data stats for chart
-  const { data: chartData = [] } = useQuery({
+  // Fetch data stats for chart with refetch interval
+  const { 
+    data: chartData = [],
+    refetch: refetchChartData
+  } = useQuery({
     queryKey: ['itemCountsByType'],
-    queryFn: getItemCountsByType
+    queryFn: getItemCountsByType,
+    refetchInterval: 10000
   });
   
-  // Fetch total items count
-  const { data: totalItems = 0 } = useQuery({
+  // Fetch total items count with refetch interval
+  const { 
+    data: totalItems = 0,
+    refetch: refetchTotalItems
+  } = useQuery({
     queryKey: ['totalItemsCount'],
-    queryFn: getTotalItemsCount
+    queryFn: getTotalItemsCount,
+    refetchInterval: 10000
   });
   
   // Fetch last scraped date
-  const { data: lastScrapedDate } = useQuery({
+  const { 
+    data: lastScrapedDate,
+    refetch: refetchLastScrapedDate
+  } = useQuery({
     queryKey: ['lastScrapedDate'],
-    queryFn: getLastScrapedDate
+    queryFn: getLastScrapedDate,
+    refetchInterval: 10000
   });
   
   // Fetch scraping speed
-  const { data: scrapingSpeed } = useQuery({
+  const { 
+    data: scrapingSpeed,
+    refetch: refetchScrapingSpeed
+  } = useQuery({
     queryKey: ['scrapingSpeed'],
-    queryFn: getScrapingSpeed
+    queryFn: getScrapingSpeed,
+    refetchInterval: 10000
   });
   
   // Check latest scrape job status
@@ -84,13 +109,46 @@ const Index = () => {
     timestamp: format(new Date(item.scraped_at || new Date()), "yyyy-MM-dd HH:mm"),
     url: item.url
   }));
+
+  const handlePurgeData = async () => {
+    try {
+      setIsPurging(true);
+      await purgeScrapedItems();
+      toast.success("Successfully purged all mock data");
+      
+      // Refetch all data
+      await Promise.all([
+        refetchRecentItems(),
+        refetchChartData(),
+        refetchTotalItems(),
+        refetchLastScrapedDate(),
+        refetchScrapingSpeed()
+      ]);
+    } catch (error) {
+      console.error("Error purging data:", error);
+      toast.error("Failed to purge data");
+    } finally {
+      setIsPurging(false);
+    }
+  };
   
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       
       <main className="container mx-auto py-6 px-4">
-        <h2 className="text-2xl font-bold mb-6">{t('dashboard')}</h2>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold">{t('dashboard')}</h2>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handlePurgeData}
+            disabled={isPurging}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            {isPurging ? "Purging..." : "Purge Mock Data"}
+          </Button>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <StatusCard 
