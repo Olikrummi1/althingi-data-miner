@@ -73,6 +73,47 @@ export async function updateScrapeJobStatus(
   }
 }
 
+export async function stopScrapeJob(id: string): Promise<boolean> {
+  try {
+    // First check if the job exists and is running
+    const { data: job, error: fetchError } = await supabase
+      .from("scrape_jobs")
+      .select("*")
+      .eq("id", id)
+      .single();
+    
+    if (fetchError || !job) {
+      console.error("Error fetching job to stop:", fetchError);
+      return false;
+    }
+    
+    // Only update jobs that are in running or pending status
+    if (job.status !== "running" && job.status !== "pending") {
+      console.log("Job is not running or pending, cannot stop", job.status);
+      return false;
+    }
+    
+    const { error } = await supabase
+      .from("scrape_jobs")
+      .update({
+        status: "failed", // Using "failed" status instead of "stopped" to avoid constraint issues
+        completed_at: new Date().toISOString(),
+        error_message: "Manually stopped by user"
+      })
+      .eq("id", id);
+
+    if (error) {
+      console.error("Error stopping job:", error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error in stopScrapeJob:", error);
+    return false;
+  }
+}
+
 export async function getActiveJobs(): Promise<ScrapeJob[]> {
   try {
     const { data, error } = await supabase

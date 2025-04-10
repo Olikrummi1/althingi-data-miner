@@ -1,4 +1,3 @@
-
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -9,6 +8,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, StopCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { stopScrapeJob } from "@/services/scrapeJobsService";
 
 type ScrapeConfigCardProps = {
   title: string;
@@ -33,7 +33,6 @@ const ScrapeConfigCard = ({
   const urlRef = useRef<HTMLInputElement>(null);
   const depthRef = useRef<HTMLInputElement>(null);
 
-  // Helper function to get the correct default URL based on the scraper type
   const getDefaultUrl = () => {
     switch (title.toLowerCase()) {
       case "bills":
@@ -43,7 +42,6 @@ const ScrapeConfigCard = ({
       case "speeches":
         return "https://www.althingi.is/altext/raedur/";
       case "mps":
-        // Try different possible URLs for MPs
         return "https://www.althingi.is/thingmenn/althingismenn/";
       case "committees":
         return "https://www.althingi.is/thingnefndir/fastanefndir/";
@@ -54,7 +52,6 @@ const ScrapeConfigCard = ({
     }
   };
 
-  // Poll for job status updates when there's an active job
   useEffect(() => {
     if (!activeJob || !activeJob.id) return;
 
@@ -65,7 +62,6 @@ const ScrapeConfigCard = ({
 
     let intervalId: number;
     
-    // Only set up polling for running jobs
     if (activeJob.status === "running" || activeJob.status === "pending") {
       intervalId = window.setInterval(async () => {
         try {
@@ -86,7 +82,6 @@ const ScrapeConfigCard = ({
               setItemsScraped(data.items_scraped);
             }
             
-            // Clear interval if job is no longer running
             if (data.status !== "running" && data.status !== "pending") {
               clearInterval(intervalId);
             }
@@ -94,7 +89,7 @@ const ScrapeConfigCard = ({
         } catch (error) {
           console.error("Error in status polling:", error);
         }
-      }, 3000); // Poll every 3 seconds
+      }, 3000);
     }
     
     return () => {
@@ -112,7 +107,6 @@ const ScrapeConfigCard = ({
     setIsLoading(true);
     
     try {
-      // Call the scrape function with config values
       await onScrape({ url, depth });
       toast.success(`Started scraping ${title}`);
     } catch (error) {
@@ -127,23 +121,14 @@ const ScrapeConfigCard = ({
     if (!activeJob || !activeJob.id) return;
     
     try {
-      // Update job status to stopped
-      const { error } = await supabase
-        .from("scrape_jobs")
-        .update({ 
-          status: "stopped", 
-          completed_at: new Date().toISOString(),
-          error_message: "Manually stopped by user"
-        })
-        .eq("id", activeJob.id);
+      const success = await stopScrapeJob(activeJob.id);
       
-      if (error) {
-        console.error("Error stopping job:", error);
+      if (!success) {
         toast.error("Failed to stop scraper");
         return;
       }
       
-      setJobStatus("stopped");
+      setJobStatus("failed");
       toast.success(`Stopped ${title} scraper`);
     } catch (error) {
       console.error("Error stopping scraper:", error);
