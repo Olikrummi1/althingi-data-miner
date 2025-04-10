@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -8,20 +8,33 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import { toast } from "sonner";
+import { getScrapeSettings, updateScrapeSettings } from "@/services/scrapeSettingsService";
 
 const SettingsPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [settings, setSettings] = useState({
     concurrency: 5,
     throttle: 1000,
-    respectRobotsTxt: true,
-    saveRawHtml: true,
-    enableNotifications: true,
-    retryFailed: true,
-    timeoutSeconds: 30,
-    maxDepth: 3,
-    userAgent: "AlthingiDataMiner/1.0 (https://yourdomain.com; info@yourdomain.com)"
+    respect_robots_txt: true,
+    save_raw_html: true,
+    enable_notifications: true,
+    retry_failed: true,
+    timeout_seconds: 30,
+    max_depth: 3,
+    user_agent: "AlthingiDataMiner/1.0 (https://yourdomain.com; info@yourdomain.com)"
   });
+
+  // Load settings from the database
+  useEffect(() => {
+    const loadSettings = async () => {
+      const dbSettings = await getScrapeSettings();
+      if (dbSettings) {
+        setSettings(dbSettings);
+      }
+    };
+    
+    loadSettings();
+  }, []);
 
   const handleChange = (key: keyof typeof settings, value: any) => {
     setSettings(prev => ({
@@ -30,14 +43,16 @@ const SettingsPage = () => {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsLoading(true);
     
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
+    const success = await updateScrapeSettings(settings);
+    
+    setIsLoading(false);
+    
+    if (success) {
       toast.success("Settings saved successfully");
-    }, 1000);
+    }
   };
 
   const handleReset = () => {
@@ -89,35 +104,35 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="timeoutSeconds">Request Timeout (s)</Label>
+                  <Label htmlFor="timeout_seconds">Request Timeout (s)</Label>
                   <Input 
-                    id="timeoutSeconds" 
+                    id="timeout_seconds" 
                     type="number" 
                     min="5" 
                     max="120" 
-                    value={settings.timeoutSeconds}
-                    onChange={(e) => handleChange('timeoutSeconds', parseInt(e.target.value))}
+                    value={settings.timeout_seconds}
+                    onChange={(e) => handleChange('timeout_seconds', parseInt(e.target.value))}
                   />
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="maxDepth">Max Crawl Depth</Label>
+                  <Label htmlFor="max_depth">Max Crawl Depth</Label>
                   <Input 
-                    id="maxDepth" 
+                    id="max_depth" 
                     type="number" 
                     min="1" 
                     max="10" 
-                    value={settings.maxDepth}
-                    onChange={(e) => handleChange('maxDepth', parseInt(e.target.value))}
+                    value={settings.max_depth}
+                    onChange={(e) => handleChange('max_depth', parseInt(e.target.value))}
                   />
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="userAgent">User Agent</Label>
+                  <Label htmlFor="user_agent">User Agent</Label>
                   <Input 
-                    id="userAgent" 
-                    value={settings.userAgent}
-                    onChange={(e) => handleChange('userAgent', e.target.value)}
+                    id="user_agent" 
+                    value={settings.user_agent}
+                    onChange={(e) => handleChange('user_agent', e.target.value)}
                   />
                 </div>
               </div>
@@ -126,41 +141,41 @@ const SettingsPage = () => {
               
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="respectRobotsTxt">Respect robots.txt</Label>
+                  <Label htmlFor="respect_robots_txt">Respect robots.txt</Label>
                   <Switch 
-                    id="respectRobotsTxt" 
-                    checked={settings.respectRobotsTxt}
-                    onCheckedChange={(checked) => handleChange('respectRobotsTxt', checked)}
+                    id="respect_robots_txt" 
+                    checked={settings.respect_robots_txt}
+                    onCheckedChange={(checked) => handleChange('respect_robots_txt', checked)}
                     className="data-[state=checked]:bg-althingi-blue"
                   />
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="saveRawHtml">Save raw HTML</Label>
+                  <Label htmlFor="save_raw_html">Save raw HTML</Label>
                   <Switch 
-                    id="saveRawHtml" 
-                    checked={settings.saveRawHtml}
-                    onCheckedChange={(checked) => handleChange('saveRawHtml', checked)}
+                    id="save_raw_html" 
+                    checked={settings.save_raw_html}
+                    onCheckedChange={(checked) => handleChange('save_raw_html', checked)}
                     className="data-[state=checked]:bg-althingi-blue"
                   />
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="enableNotifications">Enable notifications</Label>
+                  <Label htmlFor="enable_notifications">Enable notifications</Label>
                   <Switch 
-                    id="enableNotifications" 
-                    checked={settings.enableNotifications}
-                    onCheckedChange={(checked) => handleChange('enableNotifications', checked)}
+                    id="enable_notifications" 
+                    checked={settings.enable_notifications}
+                    onCheckedChange={(checked) => handleChange('enable_notifications', checked)}
                     className="data-[state=checked]:bg-althingi-blue"
                   />
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="retryFailed">Retry failed requests</Label>
+                  <Label htmlFor="retry_failed">Retry failed requests</Label>
                   <Switch 
-                    id="retryFailed" 
-                    checked={settings.retryFailed}
-                    onCheckedChange={(checked) => handleChange('retryFailed', checked)}
+                    id="retry_failed" 
+                    checked={settings.retry_failed}
+                    onCheckedChange={(checked) => handleChange('retry_failed', checked)}
                     className="data-[state=checked]:bg-althingi-blue"
                   />
                 </div>
@@ -186,22 +201,22 @@ const SettingsPage = () => {
               <div className="grid gap-4">
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="dbHost">Database Host</Label>
-                  <Input id="dbHost" placeholder="localhost" />
+                  <Input id="dbHost" placeholder="localhost" disabled value="supabase.co" />
                 </div>
                 
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="dbName">Database Name</Label>
-                  <Input id="dbName" placeholder="althingi_data" />
+                  <Input id="dbName" placeholder="althingi_data" disabled value="supabase" />
                 </div>
                 
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="dbUser">Database User</Label>
-                  <Input id="dbUser" placeholder="username" />
+                  <Input id="dbUser" placeholder="username" disabled value="postgres" />
                 </div>
                 
                 <div className="grid w-full items-center gap-1.5">
                   <Label htmlFor="dbPassword">Database Password</Label>
-                  <Input id="dbPassword" type="password" placeholder="••••••••" />
+                  <Input id="dbPassword" type="password" placeholder="••••••••" disabled value="********" />
                 </div>
               </div>
               

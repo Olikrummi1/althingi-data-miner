@@ -1,9 +1,12 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ScrapeConfigCard from "@/components/ScrapeConfigCard";
 import Header from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { createScrapeJob } from "@/services/scrapeJobsService";
+import { getScrapeSettings } from "@/services/scrapeSettingsService";
+import { supabase } from "@/integrations/supabase/client";
 
 const scraperConfigs = [
   {
@@ -49,6 +52,19 @@ const ScraperPage = () => {
   });
   
   const [isRunningAll, setIsRunningAll] = useState(false);
+  const [settings, setSettings] = useState<any>(null);
+
+  // Load scrape settings
+  useEffect(() => {
+    const loadSettings = async () => {
+      const settings = await getScrapeSettings();
+      if (settings) {
+        setSettings(settings);
+      }
+    };
+    
+    loadSettings();
+  }, []);
 
   const toggleScraper = (id: string, enabled: boolean) => {
     setEnabledScrapers(prev => ({
@@ -57,12 +73,42 @@ const ScraperPage = () => {
     }));
   };
 
-  const handleScrape = (id: string) => {
-    console.log(`Scraping ${id}`);
+  const handleScrape = async (id: string) => {
+    if (!settings) {
+      toast.error("Scrape settings not loaded");
+      return;
+    }
+    
+    // Create a scrape job in the database
+    const job = await createScrapeJob(id as any, {
+      url: `https://althingi.is/${id}`,
+      depth: 2,
+      ...settings
+    });
+    
+    if (job) {
+      // Call the edge function to start scraping
+      const { error } = await supabase.functions.invoke("run-scraper", {
+        body: { 
+          type: id, 
+          jobId: job.id,
+          config: settings
+        }
+      });
+      
+      if (error) {
+        console.error("Error invoking scraper function:", error);
+        toast.error(`Error starting scraper: ${error.message}`);
+      }
+    }
   };
 
-  const runAllEnabled = () => {
-    const enabledCount = Object.values(enabledScrapers).filter(Boolean).length;
+  const runAllEnabled = async () => {
+    const enabledScraperIds = Object.entries(enabledScrapers)
+      .filter(([_, enabled]) => enabled)
+      .map(([id]) => id);
+    
+    const enabledCount = enabledScraperIds.length;
     
     if (enabledCount === 0) {
       toast.error("Please enable at least one scraper");
@@ -70,14 +116,15 @@ const ScraperPage = () => {
     }
     
     setIsRunningAll(true);
-    
     toast.success(`Started scraping ${enabledCount} data categories`);
     
-    // Simulate completion
-    setTimeout(() => {
-      setIsRunningAll(false);
-      toast.success("All scraping tasks completed");
-    }, 3000);
+    // Run each enabled scraper
+    for (const id of enabledScraperIds) {
+      await handleScrape(id);
+    }
+    
+    setIsRunningAll(false);
+    toast.success("All scraping tasks completed");
   };
 
   return (

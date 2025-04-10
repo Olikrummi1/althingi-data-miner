@@ -9,7 +9,114 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      scrape_jobs: {
+        Row: {
+          completed_at: string | null
+          config: Json | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          items_scraped: number | null
+          started_at: string | null
+          status: string
+          type: string
+        }
+        Insert: {
+          completed_at?: string | null
+          config?: Json | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          items_scraped?: number | null
+          started_at?: string | null
+          status: string
+          type: string
+        }
+        Update: {
+          completed_at?: string | null
+          config?: Json | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          items_scraped?: number | null
+          started_at?: string | null
+          status?: string
+          type?: string
+        }
+        Relationships: []
+      }
+      scrape_settings: {
+        Row: {
+          concurrency: number
+          enable_notifications: boolean
+          id: number
+          max_depth: number
+          respect_robots_txt: boolean
+          retry_failed: boolean
+          save_raw_html: boolean
+          throttle: number
+          timeout_seconds: number
+          user_agent: string
+        }
+        Insert: {
+          concurrency?: number
+          enable_notifications?: boolean
+          id?: number
+          max_depth?: number
+          respect_robots_txt?: boolean
+          retry_failed?: boolean
+          save_raw_html?: boolean
+          throttle?: number
+          timeout_seconds?: number
+          user_agent?: string
+        }
+        Update: {
+          concurrency?: number
+          enable_notifications?: boolean
+          id?: number
+          max_depth?: number
+          respect_robots_txt?: boolean
+          retry_failed?: boolean
+          save_raw_html?: boolean
+          throttle?: number
+          timeout_seconds?: number
+          user_agent?: string
+        }
+        Relationships: []
+      }
+      scraped_items: {
+        Row: {
+          content: string | null
+          id: string
+          metadata: Json | null
+          raw_html: string | null
+          scraped_at: string | null
+          title: string
+          type: string
+          url: string
+        }
+        Insert: {
+          content?: string | null
+          id?: string
+          metadata?: Json | null
+          raw_html?: string | null
+          scraped_at?: string | null
+          title: string
+          type: string
+          url: string
+        }
+        Update: {
+          content?: string | null
+          id?: string
+          metadata?: Json | null
+          raw_html?: string | null
+          scraped_at?: string | null
+          title?: string
+          type?: string
+          url?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
