@@ -25,7 +25,6 @@ export async function createScrapeJob(type: ScrapeJob["type"], config: any = {})
       return null;
     }
 
-    toast.success(`Started scraping ${type}`);
     return data as ScrapeJob;
   } catch (error) {
     console.error("Error in createScrapeJob:", error);
@@ -45,7 +44,7 @@ export async function updateScrapeJobStatus(
     
     if (status === "running") {
       updates.started_at = new Date().toISOString();
-    } else if (status === "completed" || status === "failed") {
+    } else if (status === "completed" || status === "failed" || status === "stopped") {
       updates.completed_at = new Date().toISOString();
     }
     
@@ -71,6 +70,26 @@ export async function updateScrapeJobStatus(
   } catch (error) {
     console.error("Error in updateScrapeJobStatus:", error);
     return false;
+  }
+}
+
+export async function getActiveJobs(): Promise<ScrapeJob[]> {
+  try {
+    const { data, error } = await supabase
+      .from("scrape_jobs")
+      .select("*")
+      .in("status", ["running", "pending"])
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error fetching active jobs:", error);
+      return [];
+    }
+
+    return data as ScrapeJob[];
+  } catch (error) {
+    console.error("Error in getActiveJobs:", error);
+    return [];
   }
 }
 

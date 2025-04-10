@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -8,16 +7,13 @@ const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// Cors headers for CORS support
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Get valid item types from the database
 const VALID_TYPES = ["bill", "vote", "speech", "mp", "committee", "issue"];
 
-// Array of realistic user agents to rotate
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
@@ -26,9 +22,7 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-// Map the scraper type to a valid database item type
 function getValidItemType(scraperType: string): string {
-  // Convert plural to singular where needed
   switch(scraperType) {
     case "bills": return "bill";
     case "votes": return "vote";
@@ -40,7 +34,6 @@ function getValidItemType(scraperType: string): string {
   }
 }
 
-// Helper function to get alternative URLs for MP data
 function getMpUrls(): string[] {
   return [
     "https://www.althingi.is/thingmenn/althingismenn/",
@@ -50,7 +43,6 @@ function getMpUrls(): string[] {
   ];
 }
 
-// Helper function to get the base URL based on scraper type
 function getBaseUrl(scraperType: string): string {
   switch(scraperType) {
     case "bills": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
@@ -63,32 +55,26 @@ function getBaseUrl(scraperType: string): string {
   }
 }
 
-// Normalize URL to ensure it's properly formatted
 function normalizeUrl(url: string, baseUrl: string): string {
   if (!url) return baseUrl;
   if (url.startsWith("http")) return url;
   
-  // Handle relative URLs
   if (url.startsWith("/")) {
     const baseOrigin = new URL(baseUrl).origin;
     return `${baseOrigin}${url}`;
   }
   
-  // Handle URLs without protocol
   if (url.startsWith("www.")) {
     return `https://${url}`;
   }
   
-  // Default case: append to base URL if not absolute
   return `${baseUrl}${url}`;
 }
 
-// Helper function to get a random user agent
 function getRandomUserAgent(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// Enhanced fetch function with retry logic
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3, delayMs = 2000): Promise<Response> {
   console.log(`Attempting to fetch ${url}...`);
   
@@ -96,7 +82,6 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
     try {
       if (attempt > 0) {
         console.log(`Retry attempt ${attempt + 1} for ${url}`);
-        // Exponential backoff: wait longer between each retry
         await new Promise(resolve => setTimeout(resolve, delayMs * Math.pow(2, attempt)));
       }
       
@@ -108,38 +93,31 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
       
       console.error(`Attempt ${attempt + 1} failed with status ${response.status}: ${response.statusText}`);
       
-      // If we get a 403 or 429 (rate limiting), wait longer
       if (response.status === 403 || response.status === 429) {
         await new Promise(resolve => setTimeout(resolve, delayMs * 3));
       }
       
-      // If this is the last attempt, return the failed response anyway
       if (attempt === maxRetries - 1) {
         return response;
       }
     } catch (error) {
       console.error(`Fetch error on attempt ${attempt + 1}:`, error);
       
-      // If this is the last attempt, throw the error
       if (attempt === maxRetries - 1) {
         throw error;
       }
     }
   }
   
-  // This should never be reached due to the return/throw in the loop,
-  // but TypeScript requires a return statement
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
-// Function to extract MP data directly from the HTML
 function extractMpDataFromHtml(html: string): any[] {
   console.log("Manually extracting MP data from HTML...");
   
   const mps: any[] = [];
   
   try {
-    // Find MP table rows
     const tablePattern = /<table[^>]*>[\s\S]*?<\/table>/gi;
     const tableMatch = html.match(tablePattern);
     
@@ -150,20 +128,16 @@ function extractMpDataFromHtml(html: string): any[] {
     
     const table = tableMatch[0];
     
-    // Find rows in the table
     const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     const rows = Array.from(table.matchAll(rowPattern)).map(m => m[0]);
     
-    // Skip the header row
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
       
-      // Extract data from cells
       const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
       const cells = Array.from(row.matchAll(cellPattern)).map(m => m[1]);
       
       if (cells.length >= 4) {
-        // Extract name and link
         const nameCell = cells[0];
         const linkMatch = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(nameCell);
         
@@ -171,7 +145,6 @@ function extractMpDataFromHtml(html: string): any[] {
           const url = linkMatch[1];
           const name = linkMatch[2].replace(/<[^>]*>/g, '').trim();
           
-          // Extract constituency and party
           const constituencyCell = cells[2];
           const partyCell = cells[3];
           
@@ -202,12 +175,10 @@ function extractMpDataFromHtml(html: string): any[] {
   return mps;
 }
 
-// Direct extraction function for MP profiles
 function extractMpProfileDataFromHtml(html: string, url: string, baseData: any = null): any {
   console.log(`Manually extracting MP profile data from HTML for ${url}`);
   
   try {
-    // Initialize with base data if provided
     const mpData = baseData ? { ...baseData } : {
       title: "",
       content: "",
@@ -216,7 +187,6 @@ function extractMpProfileDataFromHtml(html: string, url: string, baseData: any =
       metadata: {}
     };
     
-    // Extract the MP's name if not already set
     if (!mpData.title || mpData.title.length === 0) {
       const namePattern = /<h1[^>]*>([\s\S]*?)<\/h1>/i;
       const nameMatch = html.match(namePattern);
@@ -225,7 +195,6 @@ function extractMpProfileDataFromHtml(html: string, url: string, baseData: any =
       }
     }
     
-    // Try to get MP's image
     const imagePattern = /<img[^>]*src="([^"]*myndir[^"]*)"[^>]*>/i;
     const imageMatch = html.match(imagePattern);
     if (imageMatch) {
@@ -233,31 +202,27 @@ function extractMpProfileDataFromHtml(html: string, url: string, baseData: any =
       mpData.metadata.imageUrl = imageSrc.startsWith('http') ? imageSrc : `https://www.althingi.is${imageSrc.startsWith('/') ? '' : '/'}${imageSrc}`;
     }
     
-    // Extract email if available
     const emailPattern = /<a[^>]*href="mailto:([^"]*)"[^>]*>/i;
     const emailMatch = html.match(emailPattern);
     if (emailMatch) {
       mpData.metadata.email = emailMatch[1];
     }
     
-    // Extract bio/content
     const bioPattern = /<div[^>]*class="[^"]*bio[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
     const bioMatch = html.match(bioPattern);
     if (bioMatch) {
       mpData.content = bioMatch[1].replace(/<[^>]*>/g, '').trim();
     } else {
-      // Try to extract content from paragraphs
       const paragraphPattern = /<p[^>]*>([\s\S]*?)<\/p>/gi;
       const paragraphs = Array.from(html.matchAll(paragraphPattern))
         .map(m => m[1].replace(/<[^>]*>/g, '').trim())
-        .filter(p => p.length > 100); // Only substantial paragraphs
+        .filter(p => p.length > 100);
       
       if (paragraphs.length > 0) {
         mpData.content = paragraphs[0];
       }
     }
     
-    // Extract social media links
     const socialLinks: string[] = [];
     const socialPattern = /<a[^>]*href="([^"]*(facebook|twitter|instagram)[^"]*)"[^>]*>/gi;
     let socialMatch;
@@ -283,35 +248,29 @@ function extractMpProfileDataFromHtml(html: string, url: string, baseData: any =
   }
 }
 
-// Specific function to extract MP data from MPs list page
 async function extractMpListData(doc: any, baseUrl: string, html: string): Promise<any[]> {
   const mps = [];
   console.log("Extracting MPs data from list page");
   
-  // Try with DOM parser first
   if (doc) {
-    // Get the MP table
     const table = doc.querySelector("table");
     
     if (table) {
-      // Get all rows except the header row
       const rows = table.querySelectorAll("tr:not(:first-child)");
       
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const cells = row.querySelectorAll("td");
         
-        if (cells.length >= 4) { // Make sure we have enough cells
+        if (cells.length >= 4) {
           const nameCell = cells[0];
           const partyCell = cells[3];
           const constituencyCell = cells[2];
           
-          // Extract the link to the MP's profile page
           const link = nameCell.querySelector("a");
           const mpUrl = link ? link.getAttribute("href") : null;
           const normalizedMpUrl = mpUrl ? normalizeUrl(mpUrl, baseUrl) : null;
           
-          // Get the MP's name and other data
           const name = nameCell.textContent?.trim() || "";
           const party = partyCell.textContent?.trim() || "";
           const constituency = constituencyCell.textContent?.trim() || "";
@@ -335,7 +294,6 @@ async function extractMpListData(doc: any, baseUrl: string, html: string): Promi
     }
   }
   
-  // If DOM parser didn't work, try direct HTML extraction
   if (mps.length === 0 && html) {
     return extractMpDataFromHtml(html);
   }
@@ -344,11 +302,9 @@ async function extractMpListData(doc: any, baseUrl: string, html: string): Promi
   return mps;
 }
 
-// Function to extract data from an MP's profile page
 async function extractMpProfileData(doc: any, url: string, html: string, baseData: any = null): Promise<any> {
   console.log(`Extracting MP profile data from ${url}`);
   
-  // Initialize with base data if provided
   const mpData = baseData ? { ...baseData } : {
     title: "",
     content: "",
@@ -357,9 +313,7 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
     metadata: {}
   };
   
-  // If DOM parsing works, use it
   if (doc) {
-    // Extract the MP's name if not already set
     if (!mpData.title || mpData.title.length === 0) {
       const nameElement = doc.querySelector("h1") || doc.querySelector(".name") || doc.querySelector("header h2");
       if (nameElement) {
@@ -367,7 +321,6 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
       }
     }
     
-    // Try to get MP's image
     const imageElement = doc.querySelector("img[src*='myndir']") || doc.querySelector(".profile-image img") || doc.querySelector("img[alt*='mynd']");
     if (imageElement) {
       const imageSrc = imageElement.getAttribute("src");
@@ -376,19 +329,16 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
       }
     }
     
-    // Try to extract position
     const positionElement = doc.querySelector(".position") || doc.querySelector("[class*='position']") || doc.querySelector(".title") || doc.querySelector("h3");
     if (positionElement) {
       mpData.metadata.position = positionElement.textContent?.trim() || "";
     }
     
-    // Try to extract biography/about
     const bioElement = doc.querySelector(".bio") || doc.querySelector(".about") || doc.querySelector(".description") || doc.querySelector("article p");
     if (bioElement) {
       mpData.content = bioElement.textContent?.trim() || mpData.content;
     }
     
-    // Extract contact information
     const emailElement = doc.querySelector("[href^='mailto:']") || doc.querySelector(".email") || doc.querySelector("a[href*='@']");
     if (emailElement) {
       const email = emailElement.getAttribute("href")?.replace("mailto:", "") || emailElement.textContent?.trim();
@@ -397,7 +347,6 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
       }
     }
     
-    // Extract social media links
     const socialLinks = doc.querySelectorAll("a[href*='facebook'], a[href*='twitter'], a[href*='instagram']");
     if (socialLinks.length > 0) {
       mpData.metadata.socialLinks = [];
@@ -410,7 +359,6 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
       }
     }
   } else if (html) {
-    // Use regex-based extraction if DOM parsing failed
     return extractMpProfileDataFromHtml(html, url, baseData);
   }
   
@@ -418,14 +366,11 @@ async function extractMpProfileData(doc: any, url: string, html: string, baseDat
   return mpData;
 }
 
-// Actual scraping function for Althingi
-async function scrapeData(scraperType: string, config: any) {
+async function scrapeData(scraperType: string, config: any, jobId: string) {
   console.log(`Scraping data type: ${scraperType} with config:`, config);
   
-  // Get the valid item type for database insertion
   const validType = getValidItemType(scraperType);
   
-  // Set default values from config or use defaults
   const maxDepth = config.depth || 2;
   const throttle = config.throttle || 1500;
   const saveRawHtml = config.save_raw_html || false;
@@ -433,11 +378,9 @@ async function scrapeData(scraperType: string, config: any) {
   
   let urlsToVisit: string[] = [];
   
-  // If scraping MPs, try multiple potential URLs
   if (scraperType === "mps") {
     urlsToVisit = getMpUrls();
   } else {
-    // Define the base URL - use provided URL or default for the type
     const baseUrl = config.url || getBaseUrl(scraperType);
     urlsToVisit = [baseUrl];
   }
@@ -446,39 +389,50 @@ async function scrapeData(scraperType: string, config: any) {
   const scrapedItems = [];
   const failedUrls: {url: string, error: string}[] = [];
   
-  // For MP pages, we'll track MPs separately
   let mpProfiles = [];
   
-  // Used to store raw HTML of successful pages
   const successfulResponses = new Map<string, {html: string, url: string}>();
   
-  // Process each URL
+  await supabase
+    .from("scrape_jobs")
+    .update({
+      status: "running",
+      started_at: new Date().toISOString()
+    })
+    .eq("id", jobId);
+  
   for (const startUrl of urlsToVisit) {
     if (visitedUrls.has(startUrl)) continue;
     
     let currentDepthUrls = [startUrl];
     console.log(`Starting with URL: ${startUrl}`);
     
-    // Process each depth level
     for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0; depth++) {
       console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
       
       const nextDepthUrls: string[] = [];
       
-      // Process each URL at current depth
       for (const url of currentDepthUrls) {
+        const jobActive = await isJobStillActive(jobId);
+        if (!jobActive) {
+          console.log(`Job ${jobId} is no longer active, stopping scrape`);
+          return {
+            items: scrapedItems,
+            failedUrls: failedUrls,
+            stopped: true
+          };
+        }
+        
         if (visitedUrls.has(url)) continue;
         visitedUrls.add(url);
         
         try {
-          // Apply throttling
           if (throttle > 0) {
             await new Promise(resolve => setTimeout(resolve, throttle));
           }
           
           console.log(`Fetching ${url}...`);
           
-          // Set up realistic browser headers
           const headers = {
             'User-Agent': getRandomUserAgent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -493,7 +447,6 @@ async function scrapeData(scraperType: string, config: any) {
             'Sec-Fetch-User': '?1',
           };
           
-          // Fetch with retry
           const response = await fetchWithRetry(url, { 
             headers,
             signal: AbortSignal.timeout(timeout)
@@ -508,10 +461,8 @@ async function scrapeData(scraperType: string, config: any) {
           
           const html = await response.text();
           
-          // Save successful response
           successfulResponses.set(url, {html, url});
           
-          // Parse the HTML
           const parser = new DOMParser();
           const doc = parser.parseFromString(html, "text/html");
           
@@ -521,7 +472,6 @@ async function scrapeData(scraperType: string, config: any) {
             continue;
           }
           
-          // Special handling for MPs list page
           if (validType === "mp" && 
               (url.includes("/thingmenn/althingismenn/") || 
                url.includes("/thingmenn/") || 
@@ -530,14 +480,12 @@ async function scrapeData(scraperType: string, config: any) {
             console.log("Processing MPs list page");
             const mpList = await extractMpListData(doc, url, html);
             
-            // Add MPs to scraped items if we found any
             if (mpList.length > 0) {
               console.log(`Successfully found ${mpList.length} MPs in the list`);
               
               for (const mp of mpList) {
                 scrapedItems.push(mp);
                 
-                // Add MP profile URLs to visit if we're not at max depth
                 if (depth < maxDepth - 1 && mp.profileUrl) {
                   nextDepthUrls.push(mp.profileUrl);
                   mpProfiles.push({
@@ -547,18 +495,20 @@ async function scrapeData(scraperType: string, config: any) {
                 }
               }
               
-              // Skip the generic extraction below
+              await supabase
+                .from("scrape_jobs")
+                .update({ items_scraped: scrapedItems.length })
+                .eq("id", jobId);
+              
               continue;
             }
           }
           
-          // Check if this is an MP profile page we're already tracking
           const mpProfile = mpProfiles.find(p => p.url === url);
           if (validType === "mp" && mpProfile) {
             console.log(`Processing MP profile page for URL: ${url}`);
             const profileData = await extractMpProfileData(doc, url, html, mpProfile.baseData);
             
-            // Update or add the MP data
             const existingIndex = scrapedItems.findIndex(item => item.url === url);
             if (existingIndex >= 0) {
               scrapedItems[existingIndex] = profileData;
@@ -566,18 +516,19 @@ async function scrapeData(scraperType: string, config: any) {
               scrapedItems.push(profileData);
             }
             
-            // Skip the generic extraction below
+            await supabase
+              .from("scrape_jobs")
+              .update({ items_scraped: scrapedItems.length })
+              .eq("id", jobId);
+            
             continue;
           }
           
-          // Generic extraction for other page types
           let title = "";
           let content = "";
           
-          // Extract data based on type
           switch (validType) {
             case "bill":
-              // Extract bill information - using Althingi site structure
               const billTitle = doc.querySelector("h1, .title, .name")?.textContent?.trim();
               const billContent = doc.querySelector(".content, .text, article")?.textContent?.trim();
               title = billTitle || `Bill from ${url}`;
@@ -585,7 +536,6 @@ async function scrapeData(scraperType: string, config: any) {
               break;
             
             case "vote":
-              // Extract voting information - using Althingi site structure
               const voteTitle = doc.querySelector("h1, .heading, .title")?.textContent?.trim();
               const voteResults = doc.querySelector(".results, .votes, table")?.textContent?.trim();
               title = voteTitle || `Vote from ${url}`;
@@ -593,7 +543,6 @@ async function scrapeData(scraperType: string, config: any) {
               break;
             
             case "speech":
-              // Extract speech information - using Althingi site structure
               const speechTitle = doc.querySelector("h1, .title, .header")?.textContent?.trim();
               const speechText = doc.querySelector(".speech-content, .text, article")?.textContent?.trim();
               title = speechTitle || `Speech from ${url}`;
@@ -601,7 +550,6 @@ async function scrapeData(scraperType: string, config: any) {
               break;
             
             case "committee":
-              // Extract committee information - using Althingi site structure
               const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
               const committeeDesc = doc.querySelector(".description, .info, .about")?.textContent?.trim();
               title = committeeName || `Committee from ${url}`;
@@ -609,7 +557,6 @@ async function scrapeData(scraperType: string, config: any) {
               break;
             
             case "issue":
-              // Extract issue information - using Althingi site structure
               const issueName = doc.querySelector("h1, .title, .name")?.textContent?.trim();
               const issueDesc = doc.querySelector(".description, .text, .content")?.textContent?.trim();
               title = issueName || `Issue from ${url}`;
@@ -617,14 +564,11 @@ async function scrapeData(scraperType: string, config: any) {
               break;
             
             default:
-              // Generic extraction
               title = doc.querySelector("h1")?.textContent?.trim() || `Content from ${url}`;
               content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
           }
           
-          // Add the scraped item if it's not a known MP profile we already processed
           if (title && !mpProfile) {
-            // Ensure the URL is properly formatted for database storage
             const normalizedUrl = normalizeUrl(url, startUrl);
             
             scrapedItems.push({
@@ -635,9 +579,13 @@ async function scrapeData(scraperType: string, config: any) {
               scraped_at: new Date().toISOString(),
               raw_html: saveRawHtml ? html : null
             });
+            
+            await supabase
+              .from("scrape_jobs")
+              .update({ items_scraped: scrapedItems.length })
+              .eq("id", jobId);
           }
           
-          // Find more links to add to the queue if we haven't reached max depth
           if (depth < maxDepth - 1) {
             const links = doc.querySelectorAll("a");
             for (let i = 0; i < links.length; i++) {
@@ -646,19 +594,15 @@ async function scrapeData(scraperType: string, config: any) {
               
               if (!href) continue;
               
-              // Normalize the URL
               const nextUrl = normalizeUrl(href, url);
               
-              // Skip URLs that don't contain althingi.is
               if (!nextUrl.includes("althingi.is")) continue;
               
-              // Add to queue if not visited yet
               if (!visitedUrls.has(nextUrl)) {
                 nextDepthUrls.push(nextUrl);
               }
             }
           }
-          
         } catch (error) {
           const errorMsg = `Error processing ${url}: ${error instanceof Error ? error.message : String(error)}`;
           console.error(errorMsg);
@@ -666,12 +610,10 @@ async function scrapeData(scraperType: string, config: any) {
         }
       }
       
-      // Update URLs for next depth
       currentDepthUrls = nextDepthUrls;
     }
   }
   
-  // If we couldn't scrape any items normally, try to extract directly from raw HTML
   if (scrapedItems.length === 0 && successfulResponses.size > 0) {
     console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
     
@@ -681,13 +623,19 @@ async function scrapeData(scraperType: string, config: any) {
         if (mpData.length > 0) {
           scrapedItems.push(...mpData);
         } else {
-          // Try to extract as a profile page
           const profileData = extractMpProfileDataFromHtml(data.html, url);
           if (profileData.title) {
             scrapedItems.push(profileData);
           }
         }
       }
+    }
+    
+    if (scrapedItems.length > 0) {
+      await supabase
+        .from("scrape_jobs")
+        .update({ items_scraped: scrapedItems.length })
+        .eq("id", jobId);
     }
   }
   
@@ -700,8 +648,27 @@ async function scrapeData(scraperType: string, config: any) {
   };
 }
 
+async function isJobStillActive(jobId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from("scrape_jobs")
+      .select("status")
+      .eq("id", jobId)
+      .single();
+    
+    if (error) {
+      console.error("Error checking job status:", error);
+      return false;
+    }
+    
+    return data.status === "running" || data.status === "pending";
+  } catch (error) {
+    console.error("Error in isJobStillActive:", error);
+    return false;
+  }
+}
+
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { 
       status: 204, 
@@ -710,7 +677,6 @@ serve(async (req) => {
   }
 
   try {
-    // Check for empty request body
     const contentLength = req.headers.get('content-length');
     if (!contentLength || parseInt(contentLength) === 0) {
       return new Response(
@@ -725,7 +691,6 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body with error handling
     let requestData;
     try {
       const bodyText = await req.text();
@@ -764,19 +729,12 @@ serve(async (req) => {
     
     console.log(`Starting scrape job ${jobId} for type ${type}`);
     
-    // Update job status to running
-    await supabase
-      .from("scrape_jobs")
-      .update({ status: "running", started_at: new Date().toISOString() })
-      .eq("id", jobId);
-    
     try {
-      // Do the actual scraping
-      const scrapeResult = await scrapeData(type, config);
+      const scrapeResult = await scrapeData(type, config, jobId);
       const scrapedItems = scrapeResult.items;
       const failedUrls = scrapeResult.failedUrls;
+      const wasStopped = scrapeResult.stopped;
       
-      // Insert scraped items into database
       if (scrapedItems.length > 0) {
         const { error } = await supabase
           .from("scraped_items")
@@ -788,7 +746,7 @@ serve(async (req) => {
               content: item.content,
               raw_html: item.raw_html,
               scraped_at: new Date().toISOString(),
-              metadata: item.metadata // Include metadata field
+              metadata: item.metadata
             }))
           );
         
@@ -798,23 +756,25 @@ serve(async (req) => {
         }
       }
       
-      // Update job status to completed
-      await supabase
-        .from("scrape_jobs")
-        .update({ 
-          status: "completed", 
-          completed_at: new Date().toISOString(),
-          items_scraped: scrapedItems.length,
-          error_message: failedUrls.length > 0 ? 
-            `Scraped ${scrapedItems.length} items with ${failedUrls.length} failures` : null
-        })
-        .eq("id", jobId);
+      if (!wasStopped) {
+        await supabase
+          .from("scrape_jobs")
+          .update({ 
+            status: "completed", 
+            completed_at: new Date().toISOString(),
+            items_scraped: scrapedItems.length,
+            error_message: failedUrls.length > 0 ? 
+              `Scraped ${scrapedItems.length} items with ${failedUrls.length} failures` : null
+          })
+          .eq("id", jobId);
+      }
       
       return new Response(
         JSON.stringify({ 
           success: true, 
           items: scrapedItems.length,
-          failedUrls: failedUrls.length
+          failedUrls: failedUrls.length,
+          stopped: wasStopped
         }),
         { 
           status: 200, 
@@ -827,7 +787,6 @@ serve(async (req) => {
     } catch (error) {
       console.error("Scraping error:", error);
       
-      // Update job status to failed
       await supabase
         .from("scrape_jobs")
         .update({ 
