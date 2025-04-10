@@ -8,49 +8,49 @@ import { useState } from "react";
 const mockRecentItems = [
   {
     id: "1",
-    type: "bill",
+    type: "bill" as const,
     title: "Frumvarp til laga um breytingu á lögum um þingfararkaup alþingismanna",
     timestamp: "2025-04-10 10:15",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/"
   },
   {
     id: "2",
-    type: "vote",
+    type: "vote" as const,
     title: "Atkvæðagreiðsla um frumvarp til laga um vernd, friðun og veiðar á villtum fuglum og villtum spendýrum",
     timestamp: "2025-04-09 15:30",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/atkvaedagreidslur/"
   },
   {
     id: "3",
-    type: "speech",
+    type: "speech" as const,
     title: "Ræða forsætisráðherra um stöðu efnahagsmála",
     timestamp: "2025-04-09 13:45",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/raedur/"
   },
   {
     id: "4",
-    type: "bill",
+    type: "bill" as const,
     title: "Frumvarp til laga um breytingu á lögum um húsnæðismál",
     timestamp: "2025-04-08 11:20",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/"
   },
   {
     id: "5",
-    type: "vote",
+    type: "vote" as const,
     title: "Atkvæðagreiðsla um þingsályktunartillögu um stefnu í loftslagsmálum",
     timestamp: "2025-04-08 09:10",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/atkvaedagreidslur/"
   },
   {
     id: "6",
-    type: "speech",
+    type: "speech" as const,
     title: "Ræða umhverfisráðherra um náttúruvernd",
     timestamp: "2025-04-07 14:25",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/raedur/"
   },
   {
     id: "7",
-    type: "bill",
+    type: "bill" as const,
     title: "Frumvarp til laga um breytingu á barnalögum",
     timestamp: "2025-04-07 10:40",
     url: "https://althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/"
