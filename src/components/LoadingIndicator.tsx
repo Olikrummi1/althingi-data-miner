@@ -1,4 +1,5 @@
 
+import React, { memo } from "react";
 import { Loader2 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -7,7 +8,8 @@ interface LoadingIndicatorProps {
   text?: string;
 }
 
-const LoadingIndicator = ({ size = "medium", text }: LoadingIndicatorProps) => {
+// Using memo to prevent unnecessary re-renders
+const LoadingIndicator = memo(({ size = "medium", text }: LoadingIndicatorProps) => {
   const { t } = useLanguage();
   
   const sizeClass = {
@@ -24,6 +26,8 @@ const LoadingIndicator = ({ size = "medium", text }: LoadingIndicatorProps) => {
       <p className="text-lg text-gray-500">{displayText}</p>
     </div>
   );
-};
+});
+
+LoadingIndicator.displayName = 'LoadingIndicator';
 
 export default LoadingIndicator;

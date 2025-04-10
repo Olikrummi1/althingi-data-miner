@@ -1,4 +1,5 @@
 
+import React, { memo } from 'react';
 import { useLanguage } from "@/contexts/LanguageContext";
 import ScrapeConfigCard from "@/components/ScrapeConfigCard";
 import { ScraperConfig } from "@/hooks/useScraper";
@@ -11,7 +12,8 @@ interface ScraperGridProps {
   onScrape: (id: string, config: { url: string; depth: number }) => Promise<void>;
 }
 
-const ScraperGrid = ({
+// Using memo to prevent unnecessary re-renders of the grid itself
+const ScraperGrid = memo(({
   configs,
   enabledScrapers,
   activeJobs,
@@ -31,10 +33,13 @@ const ScraperGrid = ({
           onToggle={(enabled) => onToggle(config.id, enabled)}
           onScrape={(configValues) => onScrape(config.id, configValues)}
           activeJob={activeJobs[config.id] || null}
+          scrapeJobId={activeJobs[config.id]?.id || null}
         />
       ))}
     </div>
   );
-};
+});
+
+ScraperGrid.displayName = 'ScraperGrid';
 
 export default ScraperGrid;

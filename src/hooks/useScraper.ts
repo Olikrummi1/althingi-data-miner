@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { createScrapeJob } from "@/services/scrapeJobsService";
+import { createScrapeJob, stopScrapeJob } from "@/services/scrapeJobsService";
 import { getScrapeSettings } from "@/services/scrapeSettingsService";
 
 export type ActiveJob = {
@@ -69,7 +69,6 @@ export default function useScraper() {
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [totalItemsScraped, setTotalItemsScraped] = useState(0);
 
-  // Load scrape settings
   useEffect(() => {
     const loadSettings = async () => {
       setIsSettingsLoading(true);
@@ -89,12 +88,13 @@ export default function useScraper() {
     loadSettings();
   }, []);
 
-  // Load active jobs
   useEffect(() => {
     const loadActiveJobs = async () => {
-      setIsLoadingJobs(true);
       try {
-        // Get any jobs that are running or pending
+        if (isLoadingJobs) {
+          setIsLoadingJobs(true);
+        }
+        
         const { data, error } = await supabase
           .from("scrape_jobs")
           .select("*")
@@ -105,13 +105,11 @@ export default function useScraper() {
           throw error;
         }
         
-        // Group jobs by type
         const jobsByType: Record<string, ActiveJob> = {};
         let totalItems = 0;
         
         if (data && data.length > 0) {
           data.forEach(job => {
-            // Only keep the most recent job for each type
             if (!jobsByType[job.type] || new Date(job.created_at) > new Date(jobsByType[job.type].created_at)) {
               jobsByType[job.type] = job as ActiveJob;
             }
@@ -122,23 +120,28 @@ export default function useScraper() {
           });
         }
         
-        setActiveJobs(jobsByType);
-        setTotalItemsScraped(totalItems);
+        if (JSON.stringify(jobsByType) !== JSON.stringify(activeJobs)) {
+          setActiveJobs(jobsByType);
+        }
+        
+        if (totalItems !== totalItemsScraped) {
+          setTotalItemsScraped(totalItems);
+        }
       } catch (error) {
         console.error("Error loading active jobs:", error);
-        toast.error("Failed to load active scraper jobs");
       } finally {
-        setIsLoadingJobs(false);
+        if (isLoadingJobs) {
+          setIsLoadingJobs(false);
+        }
       }
     };
     
     loadActiveJobs();
     
-    // Set up polling to check for active jobs
     const intervalId = setInterval(loadActiveJobs, 5000);
     
     return () => clearInterval(intervalId);
-  }, []);
+  }, [activeJobs, totalItemsScraped, isLoadingJobs]);
 
   const toggleScraper = (id: string, enabled: boolean) => {
     setEnabledScrapers(prev => ({
@@ -154,7 +157,6 @@ export default function useScraper() {
     }
     
     try {
-      // Create a scrape job in the database with the provided config
       const job = await createScrapeJob(id as any, {
         url: config.url,
         depth: config.depth,
@@ -165,7 +167,6 @@ export default function useScraper() {
         throw new Error("Failed to create scrape job");
       }
       
-      // Call the edge function to start scraping
       const { data, error } = await supabase.functions.invoke("run-scraper", {
         body: { 
           type: id, 
@@ -183,7 +184,6 @@ export default function useScraper() {
         throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
       }
       
-      // Update active jobs
       setActiveJobs(prev => ({
         ...prev,
         [id]: { 
@@ -218,10 +218,8 @@ export default function useScraper() {
     let successCount = 0;
     let errorCount = 0;
     
-    // Run each enabled scraper
     for (const id of enabledScraperIds) {
       try {
-        // Use default config for batch scraping
         await handleScrape(id, { url: `https://althingi.is/${id}`, depth: 2 });
         successCount++;
       } catch (error) {
@@ -241,7 +239,6 @@ export default function useScraper() {
     }
   };
   
-  // Count running jobs
   const runningJobsCount = Object.values(activeJobs).length;
 
   return {

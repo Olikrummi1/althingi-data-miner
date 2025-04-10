@@ -1,4 +1,5 @@
 
+import React, { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import StatusCard from "@/components/StatusCard";
@@ -11,7 +12,8 @@ interface ScraperDashboardProps {
   onRunAll: () => void;
 }
 
-const ScraperDashboard = ({
+// Using memo to prevent unnecessary re-renders
+const ScraperDashboard = memo(({
   isRunningAll,
   isSettingsLoading,
   runningJobsCount,
@@ -42,6 +44,8 @@ const ScraperDashboard = ({
       </div>
     </div>
   );
-};
+});
+
+ScraperDashboard.displayName = 'ScraperDashboard';
 
 export default ScraperDashboard;

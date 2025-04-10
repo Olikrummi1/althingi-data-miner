@@ -1,9 +1,9 @@
+import React, { useState, useRef, useEffect, memo } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, StopCircle } from "lucide-react";
@@ -17,21 +17,25 @@ type ScrapeConfigCardProps = {
   onToggle: (enabled: boolean) => void;
   onScrape: (config: { url: string; depth: number }) => Promise<void>;
   activeJob?: { id: string; status: string; started_at: string; items_scraped?: number } | null;
+  scrapeJobId?: string | null;
 };
 
-const ScrapeConfigCard = ({
+const ScrapeConfigCard = memo(({
   title,
   description,
   enabled,
   onToggle,
   onScrape,
-  activeJob
+  activeJob,
+  scrapeJobId
 }: ScrapeConfigCardProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<string | null>(activeJob?.status || null);
   const [itemsScraped, setItemsScraped] = useState<number>(activeJob?.items_scraped || 0);
+  const [isPolling, setIsPolling] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const depthRef = useRef<HTMLInputElement>(null);
+  const pollingRef = useRef<number | null>(null);
 
   const getDefaultUrl = () => {
     switch (title.toLowerCase()) {
@@ -53,49 +57,66 @@ const ScrapeConfigCard = ({
   };
 
   useEffect(() => {
-    if (!activeJob || !activeJob.id) return;
-
-    setJobStatus(activeJob.status);
-    if (activeJob.items_scraped) {
-      setItemsScraped(activeJob.items_scraped);
+    if (activeJob) {
+      setJobStatus(activeJob.status);
+      setItemsScraped(activeJob.items_scraped || 0);
+    } else {
+      setJobStatus(null);
+      setItemsScraped(0);
     }
+  }, [activeJob]);
 
-    let intervalId: number;
-    
-    if (activeJob.status === "running" || activeJob.status === "pending") {
-      intervalId = window.setInterval(async () => {
-        try {
-          const { data, error } = await supabase
-            .from("scrape_jobs")
-            .select("status, items_scraped")
-            .eq("id", activeJob.id)
-            .single();
-          
-          if (error) {
-            console.error("Error fetching job status:", error);
-            return;
-          }
-          
-          if (data) {
-            setJobStatus(data.status);
-            if (data.items_scraped) {
-              setItemsScraped(data.items_scraped);
-            }
-            
-            if (data.status !== "running" && data.status !== "pending") {
-              clearInterval(intervalId);
-            }
-          }
-        } catch (error) {
-          console.error("Error in status polling:", error);
+  useEffect(() => {
+    const pollJobStatus = async (jobId: string) => {
+      if (!jobId) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("scrape_jobs")
+          .select("status, items_scraped")
+          .eq("id", jobId)
+          .single();
+        
+        if (error) {
+          console.error("Error fetching job status:", error);
+          return;
         }
-      }, 3000);
+        
+        if (data) {
+          if (data.status !== jobStatus) {
+            setJobStatus(data.status);
+          }
+          
+          if (data.items_scraped !== undefined && data.items_scraped !== itemsScraped) {
+            setItemsScraped(data.items_scraped);
+          }
+          
+          if (data.status !== "running" && data.status !== "pending") {
+            setIsPolling(false);
+          }
+        }
+      } catch (error) {
+        console.error("Error in status polling:", error);
+      }
+    };
+
+    const isActiveJob = jobStatus === "running" || jobStatus === "pending";
+    
+    if (isActiveJob && scrapeJobId && !isPolling) {
+      setIsPolling(true);
+      pollJobStatus(scrapeJobId);
+      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 3000);
+    } else if (!isActiveJob && isPolling) {
+      setIsPolling(false);
     }
     
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (pollingRef.current !== null) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     };
-  }, [activeJob]);
+  }, [scrapeJobId, jobStatus, itemsScraped, isPolling]);
 
   const handleScrape = async () => {
     if (!enabled) return;
@@ -243,6 +264,8 @@ const ScrapeConfigCard = ({
       </CardFooter>
     </Card>
   );
-};
+});
+
+ScrapeConfigCard.displayName = 'ScrapeConfigCard';
 
 export default ScrapeConfigCard;
