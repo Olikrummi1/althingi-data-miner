@@ -1,19 +1,9 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Database } from "@/integrations/supabase/types";
 
-export type ScrapeSettings = {
-  id: number;
-  concurrency: number;
-  throttle: number;
-  respect_robots_txt: boolean;
-  save_raw_html: boolean;
-  enable_notifications: boolean;
-  retry_failed: boolean;
-  timeout_seconds: number;
-  max_depth: number;
-  user_agent: string;
-};
+export type ScrapeSettings = Database["public"]["Tables"]["scrape_settings"]["Row"];
 
 export async function getScrapeSettings(): Promise<ScrapeSettings | null> {
   try {

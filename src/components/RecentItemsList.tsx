@@ -1,11 +1,11 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Vote } from "lucide-react";
+import { FileText, Vote, User, Users, Folder, Bookmark } from "lucide-react";
 
 type RecentItem = {
   id: string;
-  type: "bill" | "vote" | "speech";
+  type: "bill" | "vote" | "speech" | "mp" | "committee" | "issue";
   title: string;
   timestamp: string;
   url: string;
@@ -20,8 +20,14 @@ const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
         return <Vote className="h-4 w-4 text-althingi-blue" />;
       case "speech":
         return <FileText className="h-4 w-4 text-althingi-blue" />;
+      case "mp":
+        return <User className="h-4 w-4 text-althingi-blue" />;
+      case "committee":
+        return <Users className="h-4 w-4 text-althingi-blue" />;
+      case "issue":
+        return <Folder className="h-4 w-4 text-althingi-blue" />;
       default:
-        return <FileText className="h-4 w-4 text-althingi-blue" />;
+        return <Bookmark className="h-4 w-4 text-althingi-blue" />;
     }
   };
 

@@ -1,18 +1,9 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Database } from "@/integrations/supabase/types";
 
-export type ScrapeJob = {
-  id: string;
-  type: "bills" | "votes" | "speeches" | "mps" | "committees" | "issues";
-  status: "pending" | "running" | "completed" | "failed";
-  started_at: string | null;
-  completed_at: string | null;
-  items_scraped: number | null;
-  error_message: string | null;
-  config: any | null;
-  created_at: string | null;
-};
+export type ScrapeJob = Database["public"]["Tables"]["scrape_jobs"]["Row"];
 
 export async function createScrapeJob(type: ScrapeJob["type"], config: any = {}): Promise<ScrapeJob | null> {
   try {
@@ -90,7 +81,7 @@ export async function getLatestScrapeJob(): Promise<ScrapeJob | null> {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error("Error fetching latest scrape job:", error);

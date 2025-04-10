@@ -1,16 +1,9 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Database } from "@/integrations/supabase/types";
 
-export type ScrapedItem = {
-  id: string;
-  type: "bill" | "vote" | "speech" | "mp" | "committee" | "issue";
-  title: string;
-  content: string | null;
-  url: string;
-  scraped_at: string;
-  metadata: any | null;
-};
+export type ScrapedItem = Database["public"]["Tables"]["scraped_items"]["Row"];
 
 export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
   try {
@@ -36,10 +29,9 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
+    // Using raw SQL query with .rpc() since group by is having TypeScript issues
     const { data, error } = await supabase
-      .from("scraped_items")
-      .select("type, count(*)")
-      .group("type");
+      .rpc('get_item_counts_by_type');
 
     if (error) {
       console.error("Error fetching item counts:", error);
@@ -47,7 +39,9 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
       return [];
     }
 
-    return data.map(item => ({
+    if (!data) return [];
+    
+    return data.map((item: any) => ({
       name: item.type.charAt(0).toUpperCase() + item.type.slice(1),
       count: item.count
     }));
@@ -84,14 +78,15 @@ export async function getLastScrapedDate(): Promise<string | null> {
       .from("scraped_items")
       .select("scraped_at")
       .order("scraped_at", { ascending: false })
-      .limit(1);
+      .limit(1)
+      .single();
 
-    if (error || !data.length) {
+    if (error) {
       console.error("Error fetching last scraped date:", error);
       return null;
     }
 
-    return data[0].scraped_at;
+    return data.scraped_at;
   } catch (error) {
     console.error("Error in getLastScrapedDate:", error);
     return null;

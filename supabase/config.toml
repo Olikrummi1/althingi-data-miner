@@ -2,3 +2,4 @@
 project_id = "gyrwkzowptobmfsavvij"
 
 [functions.run-scraper]
+verify_jwt = true
