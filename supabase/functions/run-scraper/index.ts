@@ -35,14 +35,34 @@ function getValidItemType(scraperType: string): string {
 // Helper function to get the base URL based on scraper type
 function getBaseUrl(scraperType: string): string {
   switch(scraperType) {
-    case "bills": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/";
+    case "bills": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
     case "votes": return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
-    case "speeches": return "https://www.althingi.is/altext/raeda/";
-    case "mps": return "https://www.althingi.is/thingmenn/althingismenn/";
-    case "committees": return "https://www.althingi.is/thingnefndir/fastanefndir/";
+    case "speeches": return "https://www.althingi.is/altext/raedur/";
+    case "mps": return "https://www.althingi.is/altext/cv/is/"; // Updated more accessible URL
+    case "committees": return "https://www.althingi.is/thingnefndir/nefndir/";
     case "issues": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
     default: return `https://www.althingi.is/`;
   }
+}
+
+// Normalize URL to ensure it's properly formatted
+function normalizeUrl(url: string, baseUrl: string): string {
+  if (!url) return baseUrl;
+  if (url.startsWith("http")) return url;
+  
+  // Handle relative URLs
+  if (url.startsWith("/")) {
+    const baseOrigin = new URL(baseUrl).origin;
+    return `${baseOrigin}${url}`;
+  }
+  
+  // Handle URLs without protocol
+  if (url.startsWith("www.")) {
+    return `https://${url}`;
+  }
+  
+  // Default case: append to base URL if not absolute
+  return `${baseUrl}${url}`;
 }
 
 // Actual scraping function for Althingi
@@ -56,8 +76,8 @@ async function scrapeData(scraperType: string, config: any) {
   const baseUrl = config.url || getBaseUrl(scraperType);
   const maxDepth = config.depth || 2;
   
-  // Set up the user agent for fetching
-  const userAgent = config.user_agent || 'AlthingiDataMiner/1.0';
+  // Set up the user agent for fetching - use a more realistic user agent
+  const userAgent = config.user_agent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
   
   // Set up throttling
   const throttle = config.throttle || 1000;
@@ -88,7 +108,11 @@ async function scrapeData(scraperType: string, config: any) {
         
         // Fetch the page
         const response = await fetch(url, {
-          headers: { 'User-Agent': userAgent }
+          headers: { 
+            'User-Agent': userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }
         });
         
         if (!response.ok) {
@@ -115,48 +139,48 @@ async function scrapeData(scraperType: string, config: any) {
         switch (validType) {
           case "bill":
             // Extract bill information - using Althingi site structure
-            const billTitle = doc.querySelector(".PL_FERILL h1, .motionTitle, .text-center h1")?.textContent?.trim();
-            const billContent = doc.querySelector(".PL_FERILL, .motionContent, .toggle-box")?.textContent?.trim();
+            const billTitle = doc.querySelector("h1, .title, .name")?.textContent?.trim();
+            const billContent = doc.querySelector(".content, .text, article")?.textContent?.trim();
             title = billTitle || `Bill from ${url}`;
             content = billContent || "";
             break;
           
           case "vote":
             // Extract voting information - using Althingi site structure
-            const voteTitle = doc.querySelector(".voting-title h1, h1.atmHeader")?.textContent?.trim();
-            const voteResults = doc.querySelector(".voting-results, .yes-votes, .no-votes, table.atmTable")?.textContent?.trim();
+            const voteTitle = doc.querySelector("h1, .heading, .title")?.textContent?.trim();
+            const voteResults = doc.querySelector(".results, .votes, table")?.textContent?.trim();
             title = voteTitle || `Vote from ${url}`;
             content = voteResults || "";
             break;
           
           case "speech":
             // Extract speech information - using Althingi site structure
-            const speechTitle = doc.querySelector(".raedur h1, h1.speechTitle")?.textContent?.trim();
-            const speechText = doc.querySelector(".raedur-content, div.speech")?.textContent?.trim();
+            const speechTitle = doc.querySelector("h1, .title, .header")?.textContent?.trim();
+            const speechText = doc.querySelector(".speech-content, .text, article")?.textContent?.trim();
             title = speechTitle || `Speech from ${url}`;
             content = speechText || "";
             break;
           
           case "mp":
             // Extract MP information - using Althingi site structure
-            const mpName = doc.querySelector(".thingmadur h1, .mp-name, h1.name")?.textContent?.trim();
-            const mpBio = doc.querySelector(".thingmadur-info, .member-info, .biography")?.textContent?.trim();
+            const mpName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
+            const mpBio = doc.querySelector(".bio, .info, .about")?.textContent?.trim();
             title = mpName || `MP from ${url}`;
             content = mpBio || "";
             break;
           
           case "committee":
             // Extract committee information - using Althingi site structure
-            const committeeName = doc.querySelector(".nefnd h1, .committee-title, h1.title")?.textContent?.trim();
-            const committeeDesc = doc.querySelector(".nefnd-content, .committee-members, .committee-info")?.textContent?.trim();
+            const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
+            const committeeDesc = doc.querySelector(".description, .info, .about")?.textContent?.trim();
             title = committeeName || `Committee from ${url}`;
             content = committeeDesc || "";
             break;
           
           case "issue":
             // Extract issue information - using Althingi site structure
-            const issueName = doc.querySelector(".thingmal h1, .issue-title, h1.title")?.textContent?.trim();
-            const issueDesc = doc.querySelector(".thingmal-content, .issue-description, .content")?.textContent?.trim();
+            const issueName = doc.querySelector("h1, .title, .name")?.textContent?.trim();
+            const issueDesc = doc.querySelector(".description, .text, .content")?.textContent?.trim();
             title = issueName || `Issue from ${url}`;
             content = issueDesc || "";
             break;
@@ -169,10 +193,13 @@ async function scrapeData(scraperType: string, config: any) {
         
         // Add the scraped item
         if (title) {
+          // Ensure the URL is properly formatted for database storage
+          const normalizedUrl = normalizeUrl(url, baseUrl);
+          
           scrapedItems.push({
             title,
             content,
-            url,
+            url: normalizedUrl,
             type: validType,
             scraped_at: new Date().toISOString(),
             raw_html: config.save_raw_html ? html : null
@@ -189,17 +216,9 @@ async function scrapeData(scraperType: string, config: any) {
             if (!href) continue;
             
             // Normalize the URL
-            let nextUrl = href;
-            if (href.startsWith("/")) {
-              // Convert relative URL to absolute
-              const urlObj = new URL(url);
-              nextUrl = `${urlObj.origin}${href}`;
-            } else if (!href.startsWith("http")) {
-              // Skip mailto: tel: and other non-http protocols
-              continue;
-            }
+            const nextUrl = normalizeUrl(href, url);
             
-            // Skip URLs that don't contain althingi.is or don't match the current type
+            // Skip URLs that don't contain althingi.is
             if (!nextUrl.includes("althingi.is")) continue;
             
             // Add to queue if not visited yet

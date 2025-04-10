@@ -30,15 +30,15 @@ const ScrapeConfigCard = ({
   const getDefaultUrl = () => {
     switch (title.toLowerCase()) {
       case "bills":
-        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/";
+        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
       case "votes":
         return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
       case "speeches":
-        return "https://www.althingi.is/altext/raeda/";
+        return "https://www.althingi.is/altext/raedur/";
       case "mps":
-        return "https://www.althingi.is/thingmenn/althingismenn/";
+        return "https://www.althingi.is/altext/cv/is/";  // Updated to a more accessible URL
       case "committees":
-        return "https://www.althingi.is/thingnefndir/fastanefndir/";
+        return "https://www.althingi.is/thingnefndir/nefndir/";
       case "issues":
         return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
       default:
