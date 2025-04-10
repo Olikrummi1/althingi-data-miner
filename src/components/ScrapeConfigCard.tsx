@@ -29,7 +29,7 @@ const ScrapeConfigCard = ({
   const handleScrape = async () => {
     if (!enabled) return;
     
-    const url = urlRef.current?.value || "https://althingi.is/";
+    const url = urlRef.current?.value || `https://althingi.is/`;
     const depthValue = depthRef.current?.value || "2";
     const depth = parseInt(depthValue, 10);
     
@@ -38,6 +38,7 @@ const ScrapeConfigCard = ({
     try {
       // Call the scrape function with config values
       await onScrape({ url, depth });
+      toast.success(`Started scraping ${title}`);
     } catch (error) {
       console.error(`Error scraping ${title}:`, error);
       toast.error(`Error starting ${title} scraper: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -65,7 +66,7 @@ const ScrapeConfigCard = ({
             <Label htmlFor={`url-${title}`}>URL</Label>
             <Input 
               id={`url-${title}`} 
-              defaultValue="https://althingi.is/" 
+              defaultValue={`https://althingi.is/${title.toLowerCase()}`}
               disabled={!enabled} 
               className="bg-background"
               ref={urlRef}

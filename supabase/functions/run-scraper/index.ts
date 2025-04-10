@@ -2,6 +2,7 @@
 // Update imports to use proper syntax for edge functions
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
+import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -31,25 +32,178 @@ function getValidItemType(scraperType: string): string {
   }
 }
 
-// Mock implementation of a scraper
+// Actual scraping function for Althingi
 async function scrapeData(scraperType: string, config: any) {
   console.log(`Scraping data type: ${scraperType} with config:`, config);
   
   // Get the valid item type for database insertion
   const validType = getValidItemType(scraperType);
   
-  // In a real implementation, you would call your scraping code here
-  // For this example, we'll simulate scraping by waiting and returning mock data
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Define the base URL if not provided
+  const baseUrl = config.url || `https://althingi.is/${scraperType}`;
+  const maxDepth = config.depth || 2;
   
-  // Mock data for different types with the correct type value for database insertion
-  const mockData = [
-    { title: `${scraperType} item 1`, url: `https://althingi.is/${scraperType}/1`, type: validType },
-    { title: `${scraperType} item 2`, url: `https://althingi.is/${scraperType}/2`, type: validType },
-    { title: `${scraperType} item 3`, url: `https://althingi.is/${scraperType}/3`, type: validType }
-  ];
+  // Set up the user agent for fetching
+  const userAgent = config.user_agent || 'AlthingiDataMiner/1.0';
   
-  return mockData;
+  // Set up throttling
+  const throttle = config.throttle || 1000;
+  
+  // Start with the base URL
+  const urlsToVisit = [baseUrl];
+  const visitedUrls = new Set<string>();
+  const scrapedItems = [];
+  
+  // Process each URL up to the max depth
+  for (let depth = 0; depth < maxDepth && urlsToVisit.length > 0; depth++) {
+    console.log(`Processing depth ${depth + 1}/${maxDepth}, ${urlsToVisit.length} URLs in queue`);
+    
+    // Get URLs for current depth
+    const currentUrls = [...urlsToVisit];
+    urlsToVisit.length = 0;
+    
+    // Process each URL at current depth
+    for (const url of currentUrls) {
+      if (visitedUrls.has(url)) continue;
+      visitedUrls.add(url);
+      
+      try {
+        // Apply throttling
+        if (throttle > 0) {
+          await new Promise(resolve => setTimeout(resolve, throttle));
+        }
+        
+        // Fetch the page
+        const response = await fetch(url, {
+          headers: { 'User-Agent': userAgent }
+        });
+        
+        if (!response.ok) {
+          console.error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+          continue;
+        }
+        
+        const html = await response.text();
+        
+        // Parse the HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        
+        if (!doc) {
+          console.error(`Failed to parse HTML from ${url}`);
+          continue;
+        }
+        
+        // Logic specific to each type of content
+        let title = "";
+        let content = "";
+        
+        // Extract data based on type
+        switch (validType) {
+          case "bill":
+            // Extract bill information
+            const billTitle = doc.querySelector("h1, .bill-title")?.textContent?.trim();
+            const billContent = doc.querySelector(".bill-content, .main-content")?.textContent?.trim();
+            title = billTitle || `Bill from ${url}`;
+            content = billContent || "";
+            break;
+          
+          case "vote":
+            // Extract voting information
+            const voteTitle = doc.querySelector("h1, .vote-title")?.textContent?.trim();
+            const voteResults = doc.querySelector(".vote-results, .voting-record")?.textContent?.trim();
+            title = voteTitle || `Vote from ${url}`;
+            content = voteResults || "";
+            break;
+          
+          case "speech":
+            // Extract speech information
+            const speechTitle = doc.querySelector("h1, .speech-title")?.textContent?.trim();
+            const speechText = doc.querySelector(".speech-content, .speech-text")?.textContent?.trim();
+            title = speechTitle || `Speech from ${url}`;
+            content = speechText || "";
+            break;
+          
+          case "mp":
+            // Extract MP information
+            const mpName = doc.querySelector("h1, .mp-name")?.textContent?.trim();
+            const mpBio = doc.querySelector(".mp-bio, .member-info")?.textContent?.trim();
+            title = mpName || `MP from ${url}`;
+            content = mpBio || "";
+            break;
+          
+          case "committee":
+            // Extract committee information
+            const committeeName = doc.querySelector("h1, .committee-name")?.textContent?.trim();
+            const committeeDesc = doc.querySelector(".committee-desc, .committee-info")?.textContent?.trim();
+            title = committeeName || `Committee from ${url}`;
+            content = committeeDesc || "";
+            break;
+          
+          case "issue":
+            // Extract issue information
+            const issueName = doc.querySelector("h1, .issue-name")?.textContent?.trim();
+            const issueDesc = doc.querySelector(".issue-desc, .issue-content")?.textContent?.trim();
+            title = issueName || `Issue from ${url}`;
+            content = issueDesc || "";
+            break;
+          
+          default:
+            // Generic extraction
+            title = doc.querySelector("h1")?.textContent?.trim() || `Content from ${url}`;
+            content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
+        }
+        
+        // Add the scraped item
+        if (title) {
+          scrapedItems.push({
+            title,
+            content,
+            url,
+            type: validType,
+            scraped_at: new Date().toISOString(),
+            raw_html: config.save_raw_html ? html : null
+          });
+        }
+        
+        // Find more links to add to the queue if we haven't reached max depth
+        if (depth < maxDepth - 1) {
+          const links = doc.querySelectorAll("a");
+          for (let i = 0; i < links.length; i++) {
+            const link = links[i];
+            const href = link.getAttribute("href");
+            
+            if (!href) continue;
+            
+            // Normalize the URL
+            let nextUrl = href;
+            if (href.startsWith("/")) {
+              // Convert relative URL to absolute
+              const urlObj = new URL(url);
+              nextUrl = `${urlObj.origin}${href}`;
+            } else if (!href.startsWith("http")) {
+              // Skip mailto: tel: and other non-http protocols
+              continue;
+            }
+            
+            // Skip URLs that don't contain althingi.is or don't match the current type
+            if (!nextUrl.includes("althingi.is")) continue;
+            
+            // Add to queue if not visited yet
+            if (!visitedUrls.has(nextUrl)) {
+              urlsToVisit.push(nextUrl);
+            }
+          }
+        }
+        
+      } catch (error) {
+        console.error(`Error processing ${url}:`, error);
+      }
+    }
+  }
+  
+  console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
+  return scrapedItems;
 }
 
 serve(async (req) => {
@@ -135,7 +289,9 @@ serve(async (req) => {
               title: item.title,
               url: item.url,
               type: item.type,
-              scraped_at: new Date().toISOString()
+              content: item.content,
+              raw_html: item.raw_html,
+              scraped_at: item.scraped_at
             }))
           );
         
