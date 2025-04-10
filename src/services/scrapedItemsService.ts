@@ -44,7 +44,6 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
   try {
     console.log("Fetching item counts by type");
     // Using the properly created RPC function to get item counts by type
-    // The correct way to call rpc with types from the Database type definition
     const { data, error } = await supabase
       .rpc('get_item_counts_by_type')
       .returns<ItemCountsByType[]>();
@@ -139,10 +138,28 @@ export async function purgeScrapedItems(): Promise<boolean> {
     }
     
     console.log("Successfully purged all scraped items");
+    toast.success("Successfully purged all scraped items");
     return true;
   } catch (error) {
     console.error("Error in purgeScrapedItems:", error);
     toast.error("Failed to purge scraped items");
+    return false;
+  }
+}
+
+export async function refreshScrapedItems(): Promise<boolean> {
+  try {
+    // This function doesn't actually refresh the data from the source,
+    // it just forces a re-fetch from the database which can be useful
+    // when data has been updated by background processes
+    
+    // We don't need to do anything special here, just return true
+    // The calling component should re-fetch the data after calling this
+    toast.success("Refreshed data from database");
+    return true;
+  } catch (error) {
+    console.error("Error in refreshScrapedItems:", error);
+    toast.error("Failed to refresh data");
     return false;
   }
 }

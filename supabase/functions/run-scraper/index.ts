@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -21,6 +22,12 @@ const USER_AGENTS = [
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
+
+// Improved constants to handle timeouts better
+const EDGE_FUNCTION_TIMEOUT_MS = 18000; // 18 seconds (conservative to allow for cleanup)
+const MAX_ITEMS_PER_TYPE = 20; // Reduced max items to prevent timeout
+const BATCH_SIZE = 3; // Smaller batch size for more frequent saves
+const SAVE_INTERVAL_MS = 3000; // Save every 3 seconds regardless of batch size
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -371,11 +378,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = config.depth || 2;
-  const throttle = config.throttle || 1500;
+  const maxDepth = Math.min(config.depth || 2, 3); // Limit max depth to 3 to prevent timeout
+  const throttle = Math.max(config.throttle || 1500, 500); // Ensure minimum throttle of 500ms
   const saveRawHtml = config.save_raw_html || false;
-  const timeout = (config.timeout_seconds || 30) * 1000;
-  const maxItemsPerType = 50; // Limit total items to prevent timeout
+  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 10000); // Limit request timeout to 10 seconds
   
   let itemsScraped = 0;
   let urlsToVisit: string[] = [];
@@ -388,10 +394,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   }
   
   const visitedUrls = new Set<string>();
-  const scrapedItems = [];
+  const scrapedItems: any[] = [];
   const failedUrls: {url: string, error: string}[] = [];
   
-  let mpProfiles = [];
+  let mpProfiles: any[] = [];
   
   const successfulResponses = new Map<string, {html: string, url: string}>();
   
@@ -409,137 +415,229 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     console.log("Updated job status to running");
   }
   
-  async function saveBatchToDb(items: any[]): Promise<boolean> {
+  // Create a function to periodically save items regardless of batch size
+  let lastSaveTime = Date.now();
+  let pendingItems: any[] = [];
+  
+  async function saveBatchToDb(items: any[], forceUpdate = false): Promise<boolean> {
     if (!items || items.length === 0) return true;
     
-    try {
-      console.log(`Attempting to save batch of ${items.length} items to database...`);
-      const { error } = await supabase
-        .from("scraped_items")
-        .insert(items);
+    const currentTime = Date.now();
+    pendingItems.push(...items);
+    
+    // Only save if we have enough items or enough time has passed or forced update
+    if (pendingItems.length >= BATCH_SIZE || 
+        currentTime - lastSaveTime > SAVE_INTERVAL_MS || 
+        forceUpdate) {
       
-      if (error) {
-        console.error("Error saving batch to database:", error);
+      try {
+        console.log(`Saving batch of ${pendingItems.length} items to database...`);
+        const { error } = await supabase
+          .from("scraped_items")
+          .insert(pendingItems);
+        
+        if (error) {
+          console.error("Error saving batch to database:", error);
+          return false;
+        }
+        
+        console.log(`Successfully saved ${pendingItems.length} items to database`);
+        lastSaveTime = currentTime;
+        pendingItems = []; // Clear pending items after successful save
+        return true;
+      } catch (error) {
+        console.error("Exception saving batch to database:", error);
         return false;
       }
-      
-      console.log(`Successfully saved ${items.length} items to database`);
-      return true;
-    } catch (error) {
-      console.error("Exception saving batch to database:", error);
-      return false;
     }
+    
+    return true; // No save attempted yet
   }
   
-  let batchCount = 0;
-  const BATCH_SIZE = 5; // Save to database every 5 items
-  const scrapedItemsBatch = [];
+  // Setup a timeout to ensure we save data before the edge function times out
+  const timeoutId = setTimeout(async () => {
+    console.log("Approaching function timeout, saving remaining data and completing job...");
+    
+    if (pendingItems.length > 0) {
+      await saveBatchToDb([], true); // Force save any pending items
+    }
+    
+    await supabase
+      .from("scrape_jobs")
+      .update({ 
+        status: "completed", 
+        completed_at: new Date().toISOString(),
+        items_scraped: itemsScraped,
+        error_message: "Function timed out but data was saved"
+      })
+      .eq("id", jobId);
+      
+    console.log("Saved all pending data before timeout");
+  }, EDGE_FUNCTION_TIMEOUT_MS);
   
-  for (const startUrl of urlsToVisit) {
-    if (visitedUrls.has(startUrl)) continue;
+  let batchCount = 0;
+  const scrapedItemsBatch: any[] = [];
+  
+  try {
+    // Setup periodic job status updates
+    const statusUpdateInterval = setInterval(async () => {
+      if (itemsScraped > 0) {
+        await supabase
+          .from("scrape_jobs")
+          .update({ items_scraped: itemsScraped })
+          .eq("id", jobId);
+        console.log(`Updated job status: ${itemsScraped} items scraped`);
+      }
+    }, 5000);
     
-    let currentDepthUrls = [startUrl];
-    console.log(`Starting with URL: ${startUrl}`);
-    
-    for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0; depth++) {
-      console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
+    for (const startUrl of urlsToVisit) {
+      if (visitedUrls.has(startUrl)) continue;
       
-      const nextDepthUrls: string[] = [];
+      let currentDepthUrls = [startUrl];
+      console.log(`Starting with URL: ${startUrl}`);
       
-      for (const url of currentDepthUrls) {
-        const jobActive = await isJobStillActive(jobId);
-        if (!jobActive) {
-          console.log(`Job ${jobId} is no longer active, stopping scrape`);
-          
-          if (scrapedItemsBatch.length > 0) {
-            await saveBatchToDb(scrapedItemsBatch);
-          }
-          
-          return {
-            items: scrapedItems,
-            failedUrls: failedUrls,
-            stopped: true
-          };
-        }
+      for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0; depth++) {
+        console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
         
-        if (visitedUrls.has(url)) continue;
-        visitedUrls.add(url);
+        const nextDepthUrls: string[] = [];
         
-        if (itemsScraped >= maxItemsPerType) {
-          console.log(`Reached maximum items limit (${maxItemsPerType}), stopping scrape`);
-          break;
-        }
+        // Only process a limited number of URLs per depth to prevent timeout
+        const urlsToProcess = currentDepthUrls.slice(0, 3);
         
-        try {
-          if (throttle > 0) {
-            await new Promise(resolve => setTimeout(resolve, throttle));
+        for (const url of urlsToProcess) {
+          // Check if we're approaching the timeout
+          if (Date.now() - lastSaveTime > SAVE_INTERVAL_MS) {
+            await saveBatchToDb([], true); // Force save
           }
           
-          console.log(`Fetching ${url}...`);
-          
-          const headers = {
-            'User-Agent': getRandomUserAgent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,is;q=0.8',
-            'Referer': 'https://www.althingi.is/',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1',
-          };
-          
-          const response = await fetchWithRetry(url, { 
-            headers,
-            signal: AbortSignal.timeout(timeout)
-          }, 3, throttle);
-          
-          if (!response.ok) {
-            const errorMsg = `Failed to fetch ${url}: ${response.status} ${response.statusText}`;
-            console.error(errorMsg);
-            failedUrls.push({url, error: errorMsg});
-            continue;
-          }
-          
-          const html = await response.text();
-          
-          successfulResponses.set(url, {html, url});
-          
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, "text/html");
-          
-          if (!doc) {
-            console.error(`Failed to parse HTML from ${url}`);
-            failedUrls.push({url, error: "Failed to parse HTML"});
-            continue;
-          }
-          
-          if (validType === "mp" && 
-              (url.includes("/thingmenn/althingismenn/") || 
-               url.includes("/thingmenn/") || 
-               url.includes("/altext/cv/is/"))) {
+          const jobActive = await isJobStillActive(jobId);
+          if (!jobActive) {
+            console.log(`Job ${jobId} is no longer active, stopping scrape`);
             
-            console.log("Processing MPs list page");
-            const mpList = await extractMpListData(doc, url, html);
+            if (scrapedItemsBatch.length > 0) {
+              await saveBatchToDb(scrapedItemsBatch, true);
+            }
             
-            if (mpList.length > 0) {
-              console.log(`Successfully found ${mpList.length} MPs in the list`);
+            clearInterval(statusUpdateInterval);
+            clearTimeout(timeoutId);
+            
+            return {
+              items: scrapedItems,
+              failedUrls: failedUrls,
+              stopped: true
+            };
+          }
+          
+          if (visitedUrls.has(url)) continue;
+          visitedUrls.add(url);
+          
+          if (itemsScraped >= MAX_ITEMS_PER_TYPE) {
+            console.log(`Reached maximum items limit (${MAX_ITEMS_PER_TYPE}), stopping scrape`);
+            break;
+          }
+          
+          try {
+            if (throttle > 0) {
+              await new Promise(resolve => setTimeout(resolve, throttle));
+            }
+            
+            console.log(`Fetching ${url}...`);
+            
+            const headers = {
+              'User-Agent': getRandomUserAgent(),
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9,is;q=0.8',
+              'Referer': 'https://www.althingi.is/',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+              'Upgrade-Insecure-Requests': '1',
+              'Sec-Fetch-Dest': 'document',
+              'Sec-Fetch-Mode': 'navigate',
+              'Sec-Fetch-Site': 'same-origin',
+              'Sec-Fetch-User': '?1',
+            };
+            
+            const response = await fetchWithRetry(url, { 
+              headers,
+              signal: AbortSignal.timeout(timeout)
+            }, 2, throttle);
+            
+            if (!response.ok) {
+              const errorMsg = `Failed to fetch ${url}: ${response.status} ${response.statusText}`;
+              console.error(errorMsg);
+              failedUrls.push({url, error: errorMsg});
+              continue;
+            }
+            
+            const html = await response.text();
+            
+            successfulResponses.set(url, {html, url});
+            
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            
+            if (!doc) {
+              console.error(`Failed to parse HTML from ${url}`);
+              failedUrls.push({url, error: "Failed to parse HTML"});
+              continue;
+            }
+            
+            if (validType === "mp" && 
+                (url.includes("/thingmenn/althingismenn/") || 
+                url.includes("/thingmenn/") || 
+                url.includes("/altext/cv/is/"))) {
               
-              for (const mp of mpList) {
-                mp.scraped_at = new Date().toISOString();
-                scrapedItems.push(mp);
-                scrapedItemsBatch.push(mp);
-                itemsScraped++;
+              console.log("Processing MPs list page");
+              const mpList = await extractMpListData(doc, url, html);
+              
+              if (mpList.length > 0) {
+                console.log(`Successfully found ${mpList.length} MPs in the list`);
                 
-                if (depth < maxDepth - 1 && mp.profileUrl) {
-                  nextDepthUrls.push(mp.profileUrl);
-                  mpProfiles.push({
-                    url: mp.profileUrl,
-                    baseData: mp
-                  });
+                for (const mp of mpList) {
+                  mp.scraped_at = new Date().toISOString();
+                  scrapedItems.push(mp);
+                  scrapedItemsBatch.push(mp);
+                  itemsScraped++;
+                  
+                  if (depth < maxDepth - 1 && mp.profileUrl) {
+                    nextDepthUrls.push(mp.profileUrl);
+                    mpProfiles.push({
+                      url: mp.profileUrl,
+                      baseData: mp
+                    });
+                  }
+                  
+                  batchCount++;
+                  if (batchCount >= BATCH_SIZE) {
+                    await saveBatchToDb(scrapedItemsBatch);
+                    scrapedItemsBatch.length = 0;
+                    batchCount = 0;
+                  }
                 }
+                
+                await supabase
+                  .from("scrape_jobs")
+                  .update({ items_scraped: itemsScraped })
+                  .eq("id", jobId);
+                
+                continue;
+              }
+            }
+            
+            const mpProfile = mpProfiles.find(p => p.url === url);
+            if (validType === "mp" && mpProfile) {
+              console.log(`Processing MP profile page for URL: ${url}`);
+              const profileData = await extractMpProfileData(doc, url, html, mpProfile.baseData);
+              
+              profileData.scraped_at = new Date().toISOString();
+              
+              const existingIndex = scrapedItems.findIndex(item => item.url === url);
+              if (existingIndex >= 0) {
+                scrapedItems[existingIndex] = profileData;
+              } else {
+                scrapedItems.push(profileData);
+                scrapedItemsBatch.push(profileData);
+                itemsScraped++;
                 
                 batchCount++;
                 if (batchCount >= BATCH_SIZE) {
@@ -556,21 +654,65 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               
               continue;
             }
-          }
-          
-          const mpProfile = mpProfiles.find(p => p.url === url);
-          if (validType === "mp" && mpProfile) {
-            console.log(`Processing MP profile page for URL: ${url}`);
-            const profileData = await extractMpProfileData(doc, url, html, mpProfile.baseData);
             
-            profileData.scraped_at = new Date().toISOString();
+            let title = "";
+            let content = "";
             
-            const existingIndex = scrapedItems.findIndex(item => item.url === url);
-            if (existingIndex >= 0) {
-              scrapedItems[existingIndex] = profileData;
-            } else {
-              scrapedItems.push(profileData);
-              scrapedItemsBatch.push(profileData);
+            switch (validType) {
+              case "bill":
+                const billTitle = doc.querySelector("h1, .title, .name")?.textContent?.trim();
+                const billContent = doc.querySelector(".content, .text, article")?.textContent?.trim();
+                title = billTitle || `Bill from ${url}`;
+                content = billContent || "";
+                break;
+              
+              case "vote":
+                const voteTitle = doc.querySelector("h1, .heading, .title")?.textContent?.trim();
+                const voteResults = doc.querySelector(".results, .votes, table")?.textContent?.trim();
+                title = voteTitle || `Vote from ${url}`;
+                content = voteResults || "";
+                break;
+              
+              case "speech":
+                const speechTitle = doc.querySelector("h1, .title, .header")?.textContent?.trim();
+                const speechText = doc.querySelector(".speech-content, .text, article")?.textContent?.trim();
+                title = speechTitle || `Speech from ${url}`;
+                content = speechText || "";
+                break;
+              
+              case "committee":
+                const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
+                const committeeDesc = doc.querySelector(".description, .info, .about")?.textContent?.trim();
+                title = committeeName || `Committee from ${url}`;
+                content = committeeDesc || "";
+                break;
+              
+              case "issue":
+                const issueName = doc.querySelector("h1, .title, .name")?.textContent?.trim();
+                const issueDesc = doc.querySelector(".description, .text, .content")?.textContent?.trim();
+                title = issueName || `Issue from ${url}`;
+                content = issueDesc || "";
+                break;
+              
+              default:
+                title = doc.querySelector("h1")?.textContent?.trim() || `Content from ${url}`;
+                content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
+            }
+            
+            if (title && !mpProfile) {
+              const normalizedUrl = normalizeUrl(url, startUrl);
+              
+              const newItem = {
+                title,
+                content,
+                url: normalizedUrl,
+                type: validType,
+                scraped_at: new Date().toISOString(),
+                raw_html: saveRawHtml ? html : null
+              };
+              
+              scrapedItems.push(newItem);
+              scrapedItemsBatch.push(newItem);
               itemsScraped++;
               
               batchCount++;
@@ -579,163 +721,120 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 scrapedItemsBatch.length = 0;
                 batchCount = 0;
               }
+              
+              await supabase
+                .from("scrape_jobs")
+                .update({ items_scraped: itemsScraped })
+                .eq("id", jobId);
             }
             
-            await supabase
-              .from("scrape_jobs")
-              .update({ items_scraped: itemsScraped })
-              .eq("id", jobId);
-            
-            continue;
-          }
-          
-          let title = "";
-          let content = "";
-          
-          switch (validType) {
-            case "bill":
-              const billTitle = doc.querySelector("h1, .title, .name")?.textContent?.trim();
-              const billContent = doc.querySelector(".content, .text, article")?.textContent?.trim();
-              title = billTitle || `Bill from ${url}`;
-              content = billContent || "";
-              break;
-            
-            case "vote":
-              const voteTitle = doc.querySelector("h1, .heading, .title")?.textContent?.trim();
-              const voteResults = doc.querySelector(".results, .votes, table")?.textContent?.trim();
-              title = voteTitle || `Vote from ${url}`;
-              content = voteResults || "";
-              break;
-            
-            case "speech":
-              const speechTitle = doc.querySelector("h1, .title, .header")?.textContent?.trim();
-              const speechText = doc.querySelector(".speech-content, .text, article")?.textContent?.trim();
-              title = speechTitle || `Speech from ${url}`;
-              content = speechText || "";
-              break;
-            
-            case "committee":
-              const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
-              const committeeDesc = doc.querySelector(".description, .info, .about")?.textContent?.trim();
-              title = committeeName || `Committee from ${url}`;
-              content = committeeDesc || "";
-              break;
-            
-            case "issue":
-              const issueName = doc.querySelector("h1, .title, .name")?.textContent?.trim();
-              const issueDesc = doc.querySelector(".description, .text, .content")?.textContent?.trim();
-              title = issueName || `Issue from ${url}`;
-              content = issueDesc || "";
-              break;
-            
-            default:
-              title = doc.querySelector("h1")?.textContent?.trim() || `Content from ${url}`;
-              content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
-          }
-          
-          if (title && !mpProfile) {
-            const normalizedUrl = normalizeUrl(url, startUrl);
-            
-            const newItem = {
-              title,
-              content,
-              url: normalizedUrl,
-              type: validType,
-              scraped_at: new Date().toISOString(),
-              raw_html: saveRawHtml ? html : null
-            };
-            
-            scrapedItems.push(newItem);
-            scrapedItemsBatch.push(newItem);
-            itemsScraped++;
-            
-            batchCount++;
-            if (batchCount >= BATCH_SIZE) {
-              await saveBatchToDb(scrapedItemsBatch);
-              scrapedItemsBatch.length = 0;
-              batchCount = 0;
-            }
-            
-            await supabase
-              .from("scrape_jobs")
-              .update({ items_scraped: itemsScraped })
-              .eq("id", jobId);
-          }
-          
-          if (depth < maxDepth - 1) {
-            const links = doc.querySelectorAll("a");
-            for (let i = 0; i < links.length; i++) {
-              const link = links[i];
-              const href = link.getAttribute("href");
+            if (depth < maxDepth - 1) {
+              const links = doc.querySelectorAll("a");
+              // Limit the number of links we follow to prevent timeout
+              const linkLimit = 3;
+              let linkCount = 0;
               
-              if (!href) continue;
-              
-              const nextUrl = normalizeUrl(href, url);
-              
-              if (!nextUrl.includes("althingi.is")) continue;
-              
-              if (!visitedUrls.has(nextUrl)) {
-                nextDepthUrls.push(nextUrl);
+              for (let i = 0; i < links.length && linkCount < linkLimit; i++) {
+                const link = links[i];
+                const href = link.getAttribute("href");
+                
+                if (!href) continue;
+                
+                const nextUrl = normalizeUrl(href, url);
+                
+                if (!nextUrl.includes("althingi.is")) continue;
+                
+                if (!visitedUrls.has(nextUrl)) {
+                  nextDepthUrls.push(nextUrl);
+                  linkCount++;
+                }
               }
             }
+          } catch (error) {
+            const errorMsg = `Error processing ${url}: ${error instanceof Error ? error.message : String(error)}`;
+            console.error(errorMsg);
+            failedUrls.push({url, error: errorMsg});
           }
-        } catch (error) {
-          const errorMsg = `Error processing ${url}: ${error instanceof Error ? error.message : String(error)}`;
-          console.error(errorMsg);
-          failedUrls.push({url, error: errorMsg});
+        }
+        
+        currentDepthUrls = nextDepthUrls.slice(0, 5); // Limit number of URLs for next depth
+      }
+    }
+    
+    // Final save of any remaining items
+    if (scrapedItemsBatch.length > 0) {
+      await saveBatchToDb(scrapedItemsBatch, true);
+    }
+    
+    // Clear the timeout since we completed successfully
+    clearTimeout(timeoutId);
+    clearInterval(statusUpdateInterval);
+    
+    if (scrapedItems.length === 0 && successfulResponses.size > 0) {
+      console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
+      
+      for (const [url, data] of successfulResponses) {
+        if (validType === "mp") {
+          const mpData = extractMpDataFromHtml(data.html);
+          if (mpData.length > 0) {
+            for (const mp of mpData) {
+              mp.scraped_at = new Date().toISOString();
+              scrapedItems.push(mp);
+            }
+            
+            await saveBatchToDb(mpData, true);
+            itemsScraped += mpData.length;
+          } else {
+            const profileData = extractMpProfileDataFromHtml(data.html, url);
+            if (profileData.title) {
+              profileData.scraped_at = new Date().toISOString();
+              scrapedItems.push(profileData);
+              
+              await saveBatchToDb([profileData], true);
+              itemsScraped++;
+            }
+          }
         }
       }
       
-      currentDepthUrls = nextDepthUrls;
-    }
-  }
-  
-  if (scrapedItemsBatch.length > 0) {
-    await saveBatchToDb(scrapedItemsBatch);
-  }
-  
-  if (scrapedItems.length === 0 && successfulResponses.size > 0) {
-    console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
-    
-    for (const [url, data] of successfulResponses) {
-      if (validType === "mp") {
-        const mpData = extractMpDataFromHtml(data.html);
-        if (mpData.length > 0) {
-          for (const mp of mpData) {
-            mp.scraped_at = new Date().toISOString();
-            scrapedItems.push(mp);
-          }
-          
-          await saveBatchToDb(mpData);
-          itemsScraped += mpData.length;
-        } else {
-          const profileData = extractMpProfileDataFromHtml(data.html, url);
-          if (profileData.title) {
-            profileData.scraped_at = new Date().toISOString();
-            scrapedItems.push(profileData);
-            
-            await saveBatchToDb([profileData]);
-            itemsScraped++;
-          }
-        }
+      if (scrapedItems.length > 0) {
+        await supabase
+          .from("scrape_jobs")
+          .update({ items_scraped: itemsScraped })
+          .eq("id", jobId);
       }
     }
     
-    if (scrapedItems.length > 0) {
-      await supabase
-        .from("scrape_jobs")
-        .update({ items_scraped: itemsScraped })
-        .eq("id", jobId);
+    console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
+    console.log(`Failed URLs: ${failedUrls.length}`);
+    
+    return {
+      items: scrapedItems,
+      failedUrls: failedUrls
+    };
+  } catch (error) {
+    console.error("Scraping error:", error);
+    
+    // Make sure to save any pending items before exiting due to error
+    if (scrapedItemsBatch.length > 0) {
+      await saveBatchToDb(scrapedItemsBatch, true);
     }
+    
+    // Update job status with error
+    await supabase
+      .from("scrape_jobs")
+      .update({ 
+        status: "failed", 
+        completed_at: new Date().toISOString(),
+        items_scraped: itemsScraped,
+        error_message: error instanceof Error ? error.message : String(error)
+      })
+      .eq("id", jobId);
+    
+    clearTimeout(timeoutId);
+    
+    throw error;
   }
-  
-  console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
-  console.log(`Failed URLs: ${failedUrls.length}`);
-  
-  return {
-    items: scrapedItems,
-    failedUrls: failedUrls
-  };
 }
 
 async function isJobStillActive(jobId: string): Promise<boolean> {
@@ -819,39 +918,14 @@ serve(async (req) => {
     
     console.log(`Starting scrape job ${jobId} for type ${type}`);
     
-    const TIMEOUT_MS = 25000; // 25 seconds to allow for response time
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Function execution time limit approaching")), TIMEOUT_MS);
-    });
-    
     try {
-      const scrapePromise = scrapeData(type, config, jobId);
-      const scrapeResult = await Promise.race([scrapePromise, timeoutPromise])
-        .catch(async (error) => {
-          console.error("Scraping timed out:", error);
-          
-          await supabase
-            .from("scrape_jobs")
-            .update({ 
-              status: "completed", 
-              completed_at: new Date().toISOString(),
-              error_message: "Function timed out but some data was collected"
-            })
-            .eq("id", jobId);
-          
-          return { 
-            items: [], 
-            failedUrls: [{url: "timeout", error: "Function execution time limit reached"}],
-            partialSuccess: true
-          };
-        }) as any;
+      const scrapeResult = await scrapeData(type, config || {}, jobId);
       
       const scrapedItems = scrapeResult.items || [];
       const failedUrls = scrapeResult.failedUrls || [];
       const wasStopped = scrapeResult.stopped;
-      const partialSuccess = scrapeResult.partialSuccess;
       
-      if (!wasStopped && !partialSuccess) {
+      if (!wasStopped) {
         await supabase
           .from("scrape_jobs")
           .update({ 
@@ -869,8 +943,7 @@ serve(async (req) => {
           success: true, 
           items: scrapedItems.length,
           failedUrls: failedUrls.length,
-          stopped: wasStopped,
-          partialSuccess: partialSuccess
+          stopped: wasStopped
         }),
         { 
           status: 200, 
