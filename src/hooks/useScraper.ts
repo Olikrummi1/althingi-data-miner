@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { createScrapeJob, stopScrapeJob } from "@/services/scrapeJobsService";
+import { createScrapeJob, stopScrapeJob, updateScrapeJobStatus } from "@/services/scrapeJobsService";
 import { getScrapeSettings } from "@/services/scrapeSettingsService";
 
 export type ActiveJob = {
