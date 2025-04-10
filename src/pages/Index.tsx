@@ -34,7 +34,7 @@ const Index = () => {
   } = useQuery({
     queryKey: ['recentItems'],
     queryFn: () => getRecentItems(10),
-    refetchInterval: 5000  // Refetch every 5 seconds
+    refetchInterval: 3000  // Refetch every 3 seconds (reduced from 5s)
   });
   
   // Fetch data stats for chart with refetch interval
@@ -45,7 +45,7 @@ const Index = () => {
   } = useQuery({
     queryKey: ['itemCountsByType'],
     queryFn: getItemCountsByType,
-    refetchInterval: 5000
+    refetchInterval: 3000
   });
   
   // Fetch total items count with refetch interval
@@ -56,7 +56,7 @@ const Index = () => {
   } = useQuery({
     queryKey: ['totalItemsCount'],
     queryFn: getTotalItemsCount,
-    refetchInterval: 5000
+    refetchInterval: 3000
   });
   
   // Fetch last scraped date
@@ -67,7 +67,7 @@ const Index = () => {
   } = useQuery({
     queryKey: ['lastScrapedDate'],
     queryFn: getLastScrapedDate,
-    refetchInterval: 5000
+    refetchInterval: 3000
   });
   
   // Fetch scraping speed
@@ -78,7 +78,7 @@ const Index = () => {
   } = useQuery({
     queryKey: ['scrapingSpeed'],
     queryFn: getScrapingSpeed,
-    refetchInterval: 5000
+    refetchInterval: 3000
   });
   
   // Check latest scrape job status more frequently
@@ -88,6 +88,11 @@ const Index = () => {
         const latestJob = await getLatestScrapeJob();
         if (latestJob) {
           setScrapeStatus(latestJob.status as any);
+          
+          // Force data refresh when a job is running
+          if (latestJob.status === "running") {
+            refetchAllData();
+          }
         }
       } catch (error) {
         console.error("Error checking latest job:", error);
@@ -99,7 +104,7 @@ const Index = () => {
     // Poll for status updates more frequently
     const intervalId = setInterval(() => {
       checkLatestJob();
-    }, 3000);
+    }, 2000); // Reduced from 3000ms
     
     return () => clearInterval(intervalId);
   }, []);
@@ -118,6 +123,17 @@ const Index = () => {
     url: item.url
   }));
 
+  // Function to refetch all data
+  const refetchAllData = async () => {
+    await Promise.all([
+      refetchRecentItems(),
+      refetchChartData(),
+      refetchTotalItems(),
+      refetchLastScrapedDate(),
+      refetchScrapingSpeed()
+    ]);
+  };
+
   const handlePurgeData = async () => {
     try {
       setIsPurging(true);
@@ -130,13 +146,7 @@ const Index = () => {
       }
       
       // Refetch all data
-      await Promise.all([
-        refetchRecentItems(),
-        refetchChartData(),
-        refetchTotalItems(),
-        refetchLastScrapedDate(),
-        refetchScrapingSpeed()
-      ]);
+      await refetchAllData();
     } catch (error) {
       console.error("Error purging data:", error);
       toast.error("Failed to purge data");
@@ -151,13 +161,7 @@ const Index = () => {
       toast.info("Refreshing dashboard data...");
       
       // Refetch all data
-      await Promise.all([
-        refetchRecentItems(),
-        refetchChartData(),
-        refetchTotalItems(),
-        refetchLastScrapedDate(),
-        refetchScrapingSpeed()
-      ]);
+      await refetchAllData();
       
       toast.success("Dashboard data refreshed");
     } catch (error) {

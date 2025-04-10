@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Database } from "@/integrations/supabase/types";
@@ -12,6 +13,7 @@ type ItemCountsByType = {
 
 export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
   try {
+    console.log(`Fetching up to ${limit} recent items`);
     const { data, error } = await supabase
       .from("scraped_items")
       .select("*")
@@ -24,6 +26,12 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
       return [];
     }
 
+    if (!data || data.length === 0) {
+      console.log("No scraped items found in the database");
+      return [];
+    }
+
+    console.log(`Found ${data.length} recent items`);
     return data as ScrapedItem[];
   } catch (error) {
     console.error("Error in getRecentItems:", error);
@@ -34,6 +42,7 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
+    console.log("Fetching item counts by type");
     // Using the properly created RPC function to get item counts by type
     // The correct way to call rpc with types from the Database type definition
     const { data, error } = await supabase
@@ -51,6 +60,8 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
       return [];
     }
     
+    console.log(`Found counts for ${data.length} item types`);
+    
     // Transform the data to match the expected format for the chart
     return data.map(item => ({
       name: item.type.charAt(0).toUpperCase() + item.type.slice(1),
@@ -65,6 +76,7 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
 
 export async function getTotalItemsCount(): Promise<number> {
   try {
+    console.log("Fetching total items count");
     const { count, error } = await supabase
       .from("scraped_items")
       .select("*", { count: "exact", head: true });
@@ -75,6 +87,7 @@ export async function getTotalItemsCount(): Promise<number> {
       return 0;
     }
 
+    console.log(`Total items count: ${count || 0}`);
     return count || 0;
   } catch (error) {
     console.error("Error in getTotalItemsCount:", error);
@@ -85,6 +98,7 @@ export async function getTotalItemsCount(): Promise<number> {
 
 export async function getLastScrapedDate(): Promise<string | null> {
   try {
+    console.log("Fetching last scraped date");
     const { data, error } = await supabase
       .from("scraped_items")
       .select("scraped_at")
@@ -97,6 +111,12 @@ export async function getLastScrapedDate(): Promise<string | null> {
       return null;
     }
 
+    if (data?.scraped_at) {
+      console.log(`Last scraped date: ${data.scraped_at}`);
+    } else {
+      console.log("No last scraped date found");
+    }
+
     return data?.scraped_at || null;
   } catch (error) {
     console.error("Error in getLastScrapedDate:", error);
@@ -106,6 +126,7 @@ export async function getLastScrapedDate(): Promise<string | null> {
 
 export async function purgeScrapedItems(): Promise<boolean> {
   try {
+    console.log("Purging all scraped items");
     const { error } = await supabase
       .from("scraped_items")
       .delete()
@@ -117,6 +138,7 @@ export async function purgeScrapedItems(): Promise<boolean> {
       return false;
     }
     
+    console.log("Successfully purged all scraped items");
     return true;
   } catch (error) {
     console.error("Error in purgeScrapedItems:", error);

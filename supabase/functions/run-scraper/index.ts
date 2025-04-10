@@ -395,13 +395,45 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const successfulResponses = new Map<string, {html: string, url: string}>();
   
-  await supabase
+  const startJobResult = await supabase
     .from("scrape_jobs")
     .update({
       status: "running",
       started_at: new Date().toISOString()
     })
     .eq("id", jobId);
+  
+  if (startJobResult.error) {
+    console.error("Error updating job status to running:", startJobResult.error);
+  } else {
+    console.log("Updated job status to running");
+  }
+  
+  async function saveBatchToDb(items: any[]): Promise<boolean> {
+    if (!items || items.length === 0) return true;
+    
+    try {
+      console.log(`Attempting to save batch of ${items.length} items to database...`);
+      const { error } = await supabase
+        .from("scraped_items")
+        .insert(items);
+      
+      if (error) {
+        console.error("Error saving batch to database:", error);
+        return false;
+      }
+      
+      console.log(`Successfully saved ${items.length} items to database`);
+      return true;
+    } catch (error) {
+      console.error("Exception saving batch to database:", error);
+      return false;
+    }
+  }
+  
+  let batchCount = 0;
+  const BATCH_SIZE = 5; // Save to database every 5 items
+  const scrapedItemsBatch = [];
   
   for (const startUrl of urlsToVisit) {
     if (visitedUrls.has(startUrl)) continue;
@@ -418,6 +450,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
         const jobActive = await isJobStillActive(jobId);
         if (!jobActive) {
           console.log(`Job ${jobId} is no longer active, stopping scrape`);
+          
+          if (scrapedItemsBatch.length > 0) {
+            await saveBatchToDb(scrapedItemsBatch);
+          }
+          
           return {
             items: scrapedItems,
             failedUrls: failedUrls,
@@ -427,6 +464,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
         
         if (visitedUrls.has(url)) continue;
         visitedUrls.add(url);
+        
+        if (itemsScraped >= maxItemsPerType) {
+          console.log(`Reached maximum items limit (${maxItemsPerType}), stopping scrape`);
+          break;
+        }
         
         try {
           if (throttle > 0) {
@@ -486,7 +528,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               console.log(`Successfully found ${mpList.length} MPs in the list`);
               
               for (const mp of mpList) {
+                mp.scraped_at = new Date().toISOString();
                 scrapedItems.push(mp);
+                scrapedItemsBatch.push(mp);
+                itemsScraped++;
                 
                 if (depth < maxDepth - 1 && mp.profileUrl) {
                   nextDepthUrls.push(mp.profileUrl);
@@ -495,11 +540,18 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                     baseData: mp
                   });
                 }
+                
+                batchCount++;
+                if (batchCount >= BATCH_SIZE) {
+                  await saveBatchToDb(scrapedItemsBatch);
+                  scrapedItemsBatch.length = 0;
+                  batchCount = 0;
+                }
               }
               
               await supabase
                 .from("scrape_jobs")
-                .update({ items_scraped: scrapedItems.length })
+                .update({ items_scraped: itemsScraped })
                 .eq("id", jobId);
               
               continue;
@@ -511,16 +563,27 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
             console.log(`Processing MP profile page for URL: ${url}`);
             const profileData = await extractMpProfileData(doc, url, html, mpProfile.baseData);
             
+            profileData.scraped_at = new Date().toISOString();
+            
             const existingIndex = scrapedItems.findIndex(item => item.url === url);
             if (existingIndex >= 0) {
               scrapedItems[existingIndex] = profileData;
             } else {
               scrapedItems.push(profileData);
+              scrapedItemsBatch.push(profileData);
+              itemsScraped++;
+              
+              batchCount++;
+              if (batchCount >= BATCH_SIZE) {
+                await saveBatchToDb(scrapedItemsBatch);
+                scrapedItemsBatch.length = 0;
+                batchCount = 0;
+              }
             }
             
             await supabase
               .from("scrape_jobs")
-              .update({ items_scraped: scrapedItems.length })
+              .update({ items_scraped: itemsScraped })
               .eq("id", jobId);
             
             continue;
@@ -573,18 +636,29 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           if (title && !mpProfile) {
             const normalizedUrl = normalizeUrl(url, startUrl);
             
-            scrapedItems.push({
+            const newItem = {
               title,
               content,
               url: normalizedUrl,
               type: validType,
               scraped_at: new Date().toISOString(),
               raw_html: saveRawHtml ? html : null
-            });
+            };
+            
+            scrapedItems.push(newItem);
+            scrapedItemsBatch.push(newItem);
+            itemsScraped++;
+            
+            batchCount++;
+            if (batchCount >= BATCH_SIZE) {
+              await saveBatchToDb(scrapedItemsBatch);
+              scrapedItemsBatch.length = 0;
+              batchCount = 0;
+            }
             
             await supabase
               .from("scrape_jobs")
-              .update({ items_scraped: scrapedItems.length })
+              .update({ items_scraped: itemsScraped })
               .eq("id", jobId);
           }
           
@@ -616,6 +690,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     }
   }
   
+  if (scrapedItemsBatch.length > 0) {
+    await saveBatchToDb(scrapedItemsBatch);
+  }
+  
   if (scrapedItems.length === 0 && successfulResponses.size > 0) {
     console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
     
@@ -623,11 +701,21 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       if (validType === "mp") {
         const mpData = extractMpDataFromHtml(data.html);
         if (mpData.length > 0) {
-          scrapedItems.push(...mpData);
+          for (const mp of mpData) {
+            mp.scraped_at = new Date().toISOString();
+            scrapedItems.push(mp);
+          }
+          
+          await saveBatchToDb(mpData);
+          itemsScraped += mpData.length;
         } else {
           const profileData = extractMpProfileDataFromHtml(data.html, url);
           if (profileData.title) {
+            profileData.scraped_at = new Date().toISOString();
             scrapedItems.push(profileData);
+            
+            await saveBatchToDb([profileData]);
+            itemsScraped++;
           }
         }
       }
@@ -636,7 +724,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     if (scrapedItems.length > 0) {
       await supabase
         .from("scrape_jobs")
-        .update({ items_scraped: scrapedItems.length })
+        .update({ items_scraped: itemsScraped })
         .eq("id", jobId);
     }
   }
@@ -742,7 +830,6 @@ serve(async (req) => {
         .catch(async (error) => {
           console.error("Scraping timed out:", error);
           
-          // Update the job status to reflect partial completion
           await supabase
             .from("scrape_jobs")
             .update({ 
@@ -752,7 +839,6 @@ serve(async (req) => {
             })
             .eq("id", jobId);
           
-          // Return partial results
           return { 
             items: [], 
             failedUrls: [{url: "timeout", error: "Function execution time limit reached"}],
