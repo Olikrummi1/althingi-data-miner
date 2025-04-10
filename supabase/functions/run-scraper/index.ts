@@ -1,6 +1,7 @@
 
 // Supabase Edge Function for running scrapers
-import { createClient } from '@supabase/supabase-js';
+// Note: Import from URL is required for edge functions
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

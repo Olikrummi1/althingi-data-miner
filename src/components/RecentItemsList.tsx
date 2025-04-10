@@ -3,7 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Vote, User, Users, Folder, Bookmark } from "lucide-react";
 
-type RecentItem = {
+export type RecentItem = {
   id: string;
   type: "bill" | "vote" | "speech" | "mp" | "committee" | "issue";
   title: string;

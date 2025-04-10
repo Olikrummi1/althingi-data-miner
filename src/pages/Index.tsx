@@ -9,10 +9,12 @@ import {
   getRecentItems, 
   getItemCountsByType, 
   getTotalItemsCount, 
-  getLastScrapedDate 
+  getLastScrapedDate,
+  ScrapedItem 
 } from "@/services/scrapedItemsService";
 import { getLatestScrapeJob, getScrapingSpeed } from "@/services/scrapeJobsService";
 import { format } from "date-fns";
+import { type RecentItem } from "@/components/RecentItemsList";
 
 const Index = () => {
   const [scrapeStatus, setScrapeStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
@@ -73,6 +75,15 @@ const Index = () => {
     ? format(new Date(lastScrapedDate), "d MMM, HH:mm")
     : "Never";
   
+  // Map the database items to the format expected by RecentItemsList
+  const mappedRecentItems: RecentItem[] = recentItems.map(item => ({
+    id: item.id,
+    type: item.type as RecentItem["type"], // Cast to the expected type
+    title: item.title,
+    timestamp: format(new Date(item.scraped_at || new Date()), "yyyy-MM-dd HH:mm"),
+    url: item.url
+  }));
+  
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
@@ -102,13 +113,7 @@ const Index = () => {
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <DataStatsChart data={chartData.length > 0 ? chartData : []} />
-          <RecentItemsList items={recentItems.map(item => ({
-            id: item.id,
-            type: item.type,
-            title: item.title,
-            timestamp: format(new Date(item.scraped_at), "yyyy-MM-dd HH:mm"),
-            url: item.url
-          }))} />
+          <RecentItemsList items={mappedRecentItems} />
         </div>
       </main>
     </div>

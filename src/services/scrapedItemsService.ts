@@ -29,7 +29,7 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
-    // Using raw SQL query with .rpc() since group by is having TypeScript issues
+    // Using RPC function to get item counts by type
     const { data, error } = await supabase
       .rpc('get_item_counts_by_type');
 
@@ -41,7 +41,8 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
 
     if (!data) return [];
     
-    return data.map((item: any) => ({
+    // Transform the data to match the expected format
+    return (data as Array<{type: string, count: number}>).map(item => ({
       name: item.type.charAt(0).toUpperCase() + item.type.slice(1),
       count: item.count
     }));
@@ -79,14 +80,14 @@ export async function getLastScrapedDate(): Promise<string | null> {
       .select("scraped_at")
       .order("scraped_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error("Error fetching last scraped date:", error);
       return null;
     }
 
-    return data.scraped_at;
+    return data?.scraped_at || null;
   } catch (error) {
     console.error("Error in getLastScrapedDate:", error);
     return null;
