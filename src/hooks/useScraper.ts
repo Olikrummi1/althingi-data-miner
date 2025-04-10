@@ -138,7 +138,7 @@ export default function useScraper() {
     
     loadActiveJobs();
     
-    const intervalId = setInterval(loadActiveJobs, 5000);
+    const intervalId = setInterval(loadActiveJobs, 3000);
     
     return () => clearInterval(intervalId);
   }, [activeJobs, totalItemsScraped, isLoadingJobs]);
@@ -157,6 +157,8 @@ export default function useScraper() {
     }
     
     try {
+      toast.info(`Setting up ${id} scraper...`);
+      
       const job = await createScrapeJob(id as any, {
         url: config.url,
         depth: config.depth,
@@ -168,6 +170,14 @@ export default function useScraper() {
       }
       
       try {
+        setActiveJobs(prev => ({
+          ...prev,
+          [id]: { 
+            ...job,
+            status: "pending"
+          } as ActiveJob
+        }));
+        
         const { data, error } = await supabase.functions.invoke("run-scraper", {
           body: { 
             type: id, 
@@ -199,6 +209,14 @@ export default function useScraper() {
       } catch (error: any) {
         console.error("Error invoking scraper function:", error);
         await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
+        toast.error(`Failed to start ${id} scraper: ${error.message || "Unknown error"}`);
+        
+        setActiveJobs(prev => {
+          const newJobs = { ...prev };
+          delete newJobs[id];
+          return newJobs;
+        });
+        
         throw error;
       }
     } catch (error: any) {
@@ -228,8 +246,13 @@ export default function useScraper() {
     
     for (const id of enabledScraperIds) {
       try {
-        await handleScrape(id, { url: `https://althingi.is/${id}`, depth: 2 });
+        await handleScrape(id, { 
+          url: `https://althingi.is/${id}`, 
+          depth: settings?.max_depth || 2 
+        });
         successCount++;
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
         errorCount++;

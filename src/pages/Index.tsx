@@ -17,84 +17,92 @@ import { format } from "date-fns";
 import { type RecentItem } from "@/components/RecentItemsList";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 const Index = () => {
   const { t } = useLanguage();
   const [scrapeStatus, setScrapeStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
   const [isPurging, setIsPurging] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
-  // Fetch recent items with refetch interval
+  // Fetch recent items with shorter refetch interval
   const { 
     data: recentItems = [], 
-    refetch: refetchRecentItems
+    refetch: refetchRecentItems,
+    isLoading: isLoadingRecentItems
   } = useQuery({
     queryKey: ['recentItems'],
-    queryFn: () => getRecentItems(7),
-    refetchInterval: 10000  // Refetch every 10 seconds
+    queryFn: () => getRecentItems(10),
+    refetchInterval: 5000  // Refetch every 5 seconds
   });
   
   // Fetch data stats for chart with refetch interval
   const { 
     data: chartData = [],
-    refetch: refetchChartData
+    refetch: refetchChartData,
+    isLoading: isLoadingChartData
   } = useQuery({
     queryKey: ['itemCountsByType'],
     queryFn: getItemCountsByType,
-    refetchInterval: 10000
+    refetchInterval: 5000
   });
   
   // Fetch total items count with refetch interval
   const { 
     data: totalItems = 0,
-    refetch: refetchTotalItems
+    refetch: refetchTotalItems,
+    isLoading: isLoadingTotalItems
   } = useQuery({
     queryKey: ['totalItemsCount'],
     queryFn: getTotalItemsCount,
-    refetchInterval: 10000
+    refetchInterval: 5000
   });
   
   // Fetch last scraped date
   const { 
     data: lastScrapedDate,
-    refetch: refetchLastScrapedDate
+    refetch: refetchLastScrapedDate,
+    isLoading: isLoadingLastScrapedDate
   } = useQuery({
     queryKey: ['lastScrapedDate'],
     queryFn: getLastScrapedDate,
-    refetchInterval: 10000
+    refetchInterval: 5000
   });
   
   // Fetch scraping speed
   const { 
     data: scrapingSpeed,
-    refetch: refetchScrapingSpeed
+    refetch: refetchScrapingSpeed,
+    isLoading: isLoadingScrapingSpeed
   } = useQuery({
     queryKey: ['scrapingSpeed'],
     queryFn: getScrapingSpeed,
-    refetchInterval: 10000
+    refetchInterval: 5000
   });
   
-  // Check latest scrape job status
+  // Check latest scrape job status more frequently
   useEffect(() => {
     const checkLatestJob = async () => {
-      const latestJob = await getLatestScrapeJob();
-      if (latestJob) {
-        setScrapeStatus(latestJob.status as any);
+      try {
+        const latestJob = await getLatestScrapeJob();
+        if (latestJob) {
+          setScrapeStatus(latestJob.status as any);
+        }
+      } catch (error) {
+        console.error("Error checking latest job:", error);
       }
     };
     
     checkLatestJob();
     
-    // Poll for status updates if a job is running
+    // Poll for status updates more frequently
     const intervalId = setInterval(() => {
-      if (scrapeStatus === "running") {
-        checkLatestJob();
-      }
-    }, 5000);
+      checkLatestJob();
+    }, 3000);
     
     return () => clearInterval(intervalId);
-  }, [scrapeStatus]);
+  }, []);
   
   // Format the last scraped date
   const formattedLastScrapedDate = lastScrapedDate 
@@ -113,8 +121,13 @@ const Index = () => {
   const handlePurgeData = async () => {
     try {
       setIsPurging(true);
-      await purgeScrapedItems();
-      toast.success("Successfully purged all mock data");
+      const success = await purgeScrapedItems();
+      
+      if (success) {
+        toast.success("Successfully purged all data");
+      } else {
+        toast.error("Failed to purge data");
+      }
       
       // Refetch all data
       await Promise.all([
@@ -132,6 +145,32 @@ const Index = () => {
     }
   };
   
+  const handleRefreshData = async () => {
+    try {
+      setIsRefreshing(true);
+      toast.info("Refreshing dashboard data...");
+      
+      // Refetch all data
+      await Promise.all([
+        refetchRecentItems(),
+        refetchChartData(),
+        refetchTotalItems(),
+        refetchLastScrapedDate(),
+        refetchScrapingSpeed()
+      ]);
+      
+      toast.success("Dashboard data refreshed");
+    } catch (error) {
+      console.error("Error refreshing data:", error);
+      toast.error("Failed to refresh data");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+  
+  const isLoading = isLoadingRecentItems || isLoadingChartData || isLoadingTotalItems || 
+                    isLoadingLastScrapedDate || isLoadingScrapingSpeed;
+  
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
@@ -139,15 +178,27 @@ const Index = () => {
       <main className="container mx-auto py-6 px-4">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold">{t('dashboard')}</h2>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handlePurgeData}
-            disabled={isPurging}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            {isPurging ? "Purging..." : "Purge Mock Data"}
-          </Button>
+          <div className="flex space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshData}
+              disabled={isRefreshing || isLoading}
+              className="flex items-center"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? "Refreshing..." : "Refresh Data"}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handlePurgeData}
+              disabled={isPurging || isLoading}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {isPurging ? "Purging..." : "Purge All Data"}
+            </Button>
+          </div>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">

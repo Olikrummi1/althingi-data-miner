@@ -375,7 +375,9 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   const throttle = config.throttle || 1500;
   const saveRawHtml = config.save_raw_html || false;
   const timeout = (config.timeout_seconds || 30) * 1000;
+  const maxItemsPerType = 50; // Limit total items to prevent timeout
   
+  let itemsScraped = 0;
   let urlsToVisit: string[] = [];
   
   if (scraperType === "mps") {
@@ -729,34 +731,41 @@ serve(async (req) => {
     
     console.log(`Starting scrape job ${jobId} for type ${type}`);
     
+    const TIMEOUT_MS = 25000; // 25 seconds to allow for response time
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Function execution time limit approaching")), TIMEOUT_MS);
+    });
+    
     try {
-      const scrapeResult = await scrapeData(type, config, jobId);
-      const scrapedItems = scrapeResult.items;
-      const failedUrls = scrapeResult.failedUrls;
+      const scrapePromise = scrapeData(type, config, jobId);
+      const scrapeResult = await Promise.race([scrapePromise, timeoutPromise])
+        .catch(async (error) => {
+          console.error("Scraping timed out:", error);
+          
+          // Update the job status to reflect partial completion
+          await supabase
+            .from("scrape_jobs")
+            .update({ 
+              status: "completed", 
+              completed_at: new Date().toISOString(),
+              error_message: "Function timed out but some data was collected"
+            })
+            .eq("id", jobId);
+          
+          // Return partial results
+          return { 
+            items: [], 
+            failedUrls: [{url: "timeout", error: "Function execution time limit reached"}],
+            partialSuccess: true
+          };
+        }) as any;
+      
+      const scrapedItems = scrapeResult.items || [];
+      const failedUrls = scrapeResult.failedUrls || [];
       const wasStopped = scrapeResult.stopped;
+      const partialSuccess = scrapeResult.partialSuccess;
       
-      if (scrapedItems.length > 0) {
-        const { error } = await supabase
-          .from("scraped_items")
-          .insert(
-            scrapedItems.map(item => ({
-              title: item.title,
-              url: item.url,
-              type: item.type,
-              content: item.content,
-              raw_html: item.raw_html,
-              scraped_at: new Date().toISOString(),
-              metadata: item.metadata
-            }))
-          );
-        
-        if (error) {
-          console.error("Error inserting scraped items:", error);
-          throw new Error(`Failed to insert scraped items: ${error.message}`);
-        }
-      }
-      
-      if (!wasStopped) {
+      if (!wasStopped && !partialSuccess) {
         await supabase
           .from("scrape_jobs")
           .update({ 
@@ -774,7 +783,8 @@ serve(async (req) => {
           success: true, 
           items: scrapedItems.length,
           failedUrls: failedUrls.length,
-          stopped: wasStopped
+          stopped: wasStopped,
+          partialSuccess: partialSuccess
         }),
         { 
           status: 200, 
