@@ -36,7 +36,8 @@ const ScrapeConfigCard = ({
       case "speeches":
         return "https://www.althingi.is/altext/raedur/";
       case "mps":
-        return "https://www.althingi.is/thingmenn/althingismenn/";  // Updated to correct MPs URL
+        // Try different possible URLs for MPs
+        return "https://www.althingi.is/thingmenn/althingismenn/";
       case "committees":
         return "https://www.althingi.is/thingnefndir/fastanefndir/";
       case "issues":

@@ -35,18 +35,41 @@ const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
     }
   };
 
-  // Ensure URL is complete with https if not already
+  // Enhanced URL validation and formatting
   const formatUrl = (url: string) => {
     if (!url) return "#";
-    if (url.startsWith("http")) return url;
-    return url.startsWith("/") 
-      ? `https://www.althingi.is${url}` 
-      : `https://www.althingi.is/${url}`;
+    
+    // Check if URL is well-formed
+    try {
+      // If it has a protocol, check if it's valid
+      if (url.startsWith('http')) {
+        new URL(url); // Will throw if invalid
+        return url;
+      }
+      
+      // Handle relative URLs
+      if (url.startsWith("/")) {
+        return `https://www.althingi.is${url}`;
+      }
+      
+      // Add protocol if missing
+      if (url.startsWith("www.")) {
+        return `https://${url}`;
+      }
+      
+      // Assume it's a path on althingi.is
+      return `https://www.althingi.is/${url}`;
+    } catch (e) {
+      console.error("Invalid URL:", url, e);
+      // Return a special marker for invalid URLs
+      return "#invalid";
+    }
   };
 
   const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
     // Check if URL seems valid before opening
-    if (!url || url === "#") {
+    const formattedUrl = formatUrl(url);
+    if (!formattedUrl || formattedUrl === "#" || formattedUrl === "#invalid") {
       e.preventDefault();
       toast.error("Invalid URL. This item may have been scraped incorrectly.");
     }
@@ -72,6 +95,21 @@ const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
           <Badge variant="outline" className="text-xs">
             {item.metadata.position}
           </Badge>
+        )}
+        
+        {/* Show MP image if available */}
+        {item.metadata.imageUrl && (
+          <div className="mt-2">
+            <img 
+              src={formatUrl(item.metadata.imageUrl)} 
+              alt={`${item.title}`} 
+              className="w-16 h-16 object-cover rounded-full"
+              onError={(e) => {
+                // Hide broken images
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          </div>
         )}
       </div>
     );
