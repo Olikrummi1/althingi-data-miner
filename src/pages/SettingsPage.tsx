@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import Header from "@/components/Header";
 import { toast } from "sonner";
 import { getScrapeSettings, updateScrapeSettings } from "@/services/scrapeSettingsService";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const SettingsPage = () => {
+  const { t } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [settings, setSettings] = useState({
     concurrency: 5,
@@ -68,18 +70,18 @@ const SettingsPage = () => {
       <Header />
       
       <main className="container mx-auto py-6 px-4">
-        <h2 className="text-2xl font-bold mb-6">Settings</h2>
+        <h2 className="text-2xl font-bold mb-6">{t('settings')}</h2>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
-              <CardTitle>Scraper Configuration</CardTitle>
-              <CardDescription>Control how the scraper behaves when extracting data</CardDescription>
+              <CardTitle>{t('scraperConfiguration')}</CardTitle>
+              <CardDescription>{t('scraperConfigDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4">
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="concurrency">Concurrency</Label>
+                  <Label htmlFor="concurrency">{t('concurrency')}</Label>
                   <Input 
                     id="concurrency" 
                     type="number" 
@@ -91,7 +93,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="throttle">Throttle (ms)</Label>
+                  <Label htmlFor="throttle">{t('throttle')}</Label>
                   <Input 
                     id="throttle" 
                     type="number" 
@@ -104,7 +106,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="timeout_seconds">Request Timeout (s)</Label>
+                  <Label htmlFor="timeout_seconds">{t('timeout')}</Label>
                   <Input 
                     id="timeout_seconds" 
                     type="number" 
@@ -116,7 +118,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="max_depth">Max Crawl Depth</Label>
+                  <Label htmlFor="max_depth">{t('maxDepth')}</Label>
                   <Input 
                     id="max_depth" 
                     type="number" 
@@ -128,7 +130,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="grid grid-cols-2 items-center gap-4">
-                  <Label htmlFor="user_agent">User Agent</Label>
+                  <Label htmlFor="user_agent">{t('userAgent')}</Label>
                   <Input 
                     id="user_agent" 
                     value={settings.user_agent}
@@ -141,7 +143,7 @@ const SettingsPage = () => {
               
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="respect_robots_txt">Respect robots.txt</Label>
+                  <Label htmlFor="respect_robots_txt">{t('respectRobotsTxt')}</Label>
                   <Switch 
                     id="respect_robots_txt" 
                     checked={settings.respect_robots_txt}
@@ -151,7 +153,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="save_raw_html">Save raw HTML</Label>
+                  <Label htmlFor="save_raw_html">{t('saveRawHtml')}</Label>
                   <Switch 
                     id="save_raw_html" 
                     checked={settings.save_raw_html}
@@ -161,7 +163,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="enable_notifications">Enable notifications</Label>
+                  <Label htmlFor="enable_notifications">{t('enableNotifications')}</Label>
                   <Switch 
                     id="enable_notifications" 
                     checked={settings.enable_notifications}
@@ -171,7 +173,7 @@ const SettingsPage = () => {
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="retry_failed">Retry failed requests</Label>
+                  <Label htmlFor="retry_failed">{t('retryFailed')}</Label>
                   <Switch 
                     id="retry_failed" 
                     checked={settings.retry_failed}
@@ -187,15 +189,15 @@ const SettingsPage = () => {
                 onClick={handleSave}
                 disabled={isLoading}
               >
-                {isLoading ? "Saving..." : "Save Settings"}
+                {isLoading ? t('saving') : t('saveSettings')}
               </Button>
             </CardFooter>
           </Card>
           
           <Card>
             <CardHeader>
-              <CardTitle>Database & Storage</CardTitle>
-              <CardDescription>Configure database connection and manage data</CardDescription>
+              <CardTitle>{t('databaseConnection')}</CardTitle>
+              <CardDescription>{t('databaseDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4">
@@ -224,22 +226,22 @@ const SettingsPage = () => {
                 className="w-full bg-slate-700 hover:bg-slate-800"
                 onClick={handleReset}
               >
-                Test Connection
+                {t('testConnection')}
               </Button>
             </CardContent>
             <CardFooter className="flex flex-col space-y-4">
               <div className="grid grid-cols-2 gap-4 w-full">
                 <Button variant="outline" onClick={handleClearCache}>
-                  Clear Cache
+                  {t('clearCache')}
                 </Button>
                 <Button variant="destructive">
-                  Reset Database
+                  {t('resetDatabase')}
                 </Button>
               </div>
               
               <div className="text-center text-sm text-muted-foreground">
-                <p>Current database size: 24.6 MB</p>
-                <p>Last backup: 10 Apr 2025, 00:00</p>
+                <p>{t('databaseSize')} 24.6 MB</p>
+                <p>{t('lastBackup')} 10 Apr 2025, 00:00</p>
               </div>
             </CardFooter>
           </Card>

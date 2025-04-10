@@ -1,125 +1,109 @@
 
-// Supabase Edge Function for running scrapers
-// Note: Import from URL is required for edge functions
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
+// Update imports to use proper syntax for edge functions
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-Deno.serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+// Mock implementation of a scraper
+async function scrapeData(type: string, config: any) {
+  console.log(`Scraping data type: ${type} with config:`, config);
+  
+  // In a real implementation, you would call your scraping code here
+  // For this example, we'll simulate scraping by waiting and returning mock data
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  // Mock data for different types
+  const mockData = [
+    { title: `${type} item 1`, url: `https://althingi.is/${type}/1`, type },
+    { title: `${type} item 2`, url: `https://althingi.is/${type}/2`, type },
+    { title: `${type} item 3`, url: `https://althingi.is/${type}/3`, type }
+  ];
+  
+  return mockData;
+}
+
+serve(async (req) => {
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
-
-    const { type, config } = await req.json();
-
-    // Create a new scrape job
-    const { data: job, error: jobError } = await supabase
-      .from('scrape_jobs')
-      .insert({
-        type,
-        status: 'pending',
-        config,
-      })
-      .select()
-      .single();
-
-    if (jobError) {
-      console.error('Error creating scrape job:', jobError);
+    const { type, jobId, config } = await req.json();
+    
+    if (!type || !jobId) {
       return new Response(
-        JSON.stringify({ error: 'Failed to create scrape job' }),
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 500 
-        }
+        JSON.stringify({ error: "Missing required parameters" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
-
-    // Simulate starting the scraper in the background
-    EdgeRuntime.waitUntil((async () => {
-      try {
-        // Update job to running
-        await supabase
-          .from('scrape_jobs')
-          .update({ 
-            status: 'running',
-            started_at: new Date().toISOString()
-          })
-          .eq('id', job.id);
-
-        // Fetch settings
-        const { data: settings } = await supabase
-          .from('scrape_settings')
-          .select('*')
-          .eq('id', 1)
-          .single();
-
-        // Simulate scraping (would be replaced with actual scraper logic)
-        const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-        await delay(5000); // Simulate 5 seconds of work
-
-        // Create some mock scraped items
-        const mockItems = Array.from({ length: 5 }).map((_, i) => ({
-          type: type.slice(0, -1), // Remove 's' from end (bills -> bill)
-          title: `Mock ${type.slice(0, -1)} ${i + 1}`,
-          url: `https://althingi.is/mock/${type}/${i + 1}`,
-          content: `This is mock content for ${type} ${i + 1}`,
-          metadata: { mockId: i + 1, source: 'edge-function-simulator' }
-        }));
-
-        // Insert mock items
-        await supabase.from('scraped_items').insert(mockItems);
-
-        // Update job to completed
-        await supabase
-          .from('scrape_jobs')
-          .update({ 
-            status: 'completed',
-            completed_at: new Date().toISOString(),
-            items_scraped: mockItems.length
-          })
-          .eq('id', job.id);
-
-        console.log(`Simulated scraping job ${job.id} completed`);
-      } catch (error) {
-        console.error('Error in background scraper task:', error);
+    
+    console.log(`Starting scrape job ${jobId} for type ${type}`);
+    
+    // Update job status to running
+    await supabase
+      .from("scrape_jobs")
+      .update({ status: "running", started_at: new Date().toISOString() })
+      .eq("id", jobId);
+    
+    try {
+      // Do the actual scraping
+      const scrapedItems = await scrapeData(type, config);
+      
+      // Insert scraped items into database
+      if (scrapedItems.length > 0) {
+        const { error } = await supabase
+          .from("scraped_items")
+          .insert(
+            scrapedItems.map(item => ({
+              title: item.title,
+              url: item.url,
+              type: item.type,
+              scraped_at: new Date().toISOString()
+            }))
+          );
         
-        // Update job to failed
-        await supabase
-          .from('scrape_jobs')
-          .update({ 
-            status: 'failed',
-            completed_at: new Date().toISOString(),
-            error_message: error instanceof Error ? error.message : 'Unknown error'
-          })
-          .eq('id', job.id);
+        if (error) {
+          throw new Error(`Failed to insert scraped items: ${error.message}`);
+        }
       }
-    })());
-
-    return new Response(
-      JSON.stringify({ message: 'Scraper started', jobId: job.id }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
-    );
+      
+      // Update job status to completed
+      await supabase
+        .from("scrape_jobs")
+        .update({ 
+          status: "completed", 
+          completed_at: new Date().toISOString(),
+          items_scraped: scrapedItems.length 
+        })
+        .eq("id", jobId);
+      
+      return new Response(
+        JSON.stringify({ success: true, items: scrapedItems.length }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      console.error("Scraping error:", error);
+      
+      // Update job status to failed
+      await supabase
+        .from("scrape_jobs")
+        .update({ 
+          status: "failed", 
+          completed_at: new Date().toISOString(),
+          error_message: error.message 
+        })
+        .eq("id", jobId);
+      
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
   } catch (error) {
-    console.error('Error in run-scraper function:', error);
+    console.error("Server error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500 
-      }
+      JSON.stringify({ error: "Internal server error" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 });

@@ -7,41 +7,43 @@ import { toast } from "sonner";
 import { createScrapeJob } from "@/services/scrapeJobsService";
 import { getScrapeSettings } from "@/services/scrapeSettingsService";
 import { supabase } from "@/integrations/supabase/client";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const scraperConfigs = [
   {
     id: "bills",
-    title: "Bills & Legislation",
-    description: "Scrape bills, amendments, and legislative documents"
+    titleKey: "bills",
+    descriptionKey: "billsDescription"
   },
   {
     id: "votes",
-    title: "Voting Records",
-    description: "Collect MP voting records on bills and proposals"
+    titleKey: "votes",
+    descriptionKey: "votesDescription"
   },
   {
     id: "speeches",
-    title: "Parliamentary Speeches",
-    description: "Gather speeches and discussions from parliament sessions"
+    titleKey: "speeches",
+    descriptionKey: "speechesDescription"
   },
   {
     id: "mps",
-    title: "Members of Parliament",
-    description: "Information about past and present MPs"
+    titleKey: "mps",
+    descriptionKey: "mpsDescription"
   },
   {
     id: "committees",
-    title: "Committees",
-    description: "Committee data, members and activities"
+    titleKey: "committees",
+    descriptionKey: "committeesDescription"
   },
   {
     id: "issues",
-    title: "Parliamentary Issues",
-    description: "Track issues discussed in parliament"
+    titleKey: "issues",
+    descriptionKey: "issuesDescription"
   }
 ];
 
 const ScraperPage = () => {
+  const { t } = useLanguage();
   const [enabledScrapers, setEnabledScrapers] = useState<Record<string, boolean>>({
     bills: true,
     votes: true,
@@ -133,13 +135,13 @@ const ScraperPage = () => {
       
       <main className="container mx-auto py-6 px-4">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold">Configure Scrapers</h2>
+          <h2 className="text-2xl font-bold">{t('configureScraper')}</h2>
           <Button 
             onClick={runAllEnabled} 
             disabled={isRunningAll}
             className="bg-althingi-blue hover:bg-althingi-darkBlue"
           >
-            {isRunningAll ? "Running All..." : "Run All Enabled"}
+            {isRunningAll ? t('runningAll') : t('runAllEnabled')}
           </Button>
         </div>
         
@@ -147,8 +149,8 @@ const ScraperPage = () => {
           {scraperConfigs.map(config => (
             <ScrapeConfigCard
               key={config.id}
-              title={config.title}
-              description={config.description}
+              title={t(config.titleKey)}
+              description={t(config.descriptionKey)}
               enabled={enabledScrapers[config.id] || false}
               onToggle={(enabled) => toggleScraper(config.id, enabled)}
               onScrape={() => handleScrape(config.id)}

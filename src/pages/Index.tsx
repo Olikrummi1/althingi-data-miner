@@ -9,14 +9,15 @@ import {
   getRecentItems, 
   getItemCountsByType, 
   getTotalItemsCount, 
-  getLastScrapedDate,
-  ScrapedItem 
+  getLastScrapedDate
 } from "@/services/scrapedItemsService";
 import { getLatestScrapeJob, getScrapingSpeed } from "@/services/scrapeJobsService";
 import { format } from "date-fns";
 import { type RecentItem } from "@/components/RecentItemsList";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const Index = () => {
+  const { t } = useLanguage();
   const [scrapeStatus, setScrapeStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
   
   // Fetch recent items
@@ -78,7 +79,7 @@ const Index = () => {
   // Map the database items to the format expected by RecentItemsList
   const mappedRecentItems: RecentItem[] = recentItems.map(item => ({
     id: item.id,
-    type: item.type as RecentItem["type"], // Cast to the expected type
+    type: item.type as RecentItem["type"],
     title: item.title,
     timestamp: format(new Date(item.scraped_at || new Date()), "yyyy-MM-dd HH:mm"),
     url: item.url
@@ -89,25 +90,25 @@ const Index = () => {
       <Header />
       
       <main className="container mx-auto py-6 px-4">
-        <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
+        <h2 className="text-2xl font-bold mb-6">{t('dashboard')}</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <StatusCard 
-            title="Total Items Scraped" 
+            title={t('totalItemsScraped')} 
             value={totalItems.toString()} 
-            description="Total number of records in the database" 
+            description={t('totalRecordsDescription')} 
             status={scrapeStatus}
           />
           <StatusCard 
-            title="Last Scrape" 
+            title={t('lastScrape')} 
             value={formattedLastScrapedDate} 
-            description="Time of the last successful scrape" 
+            description={t('lastScrapeDescription')} 
             status="completed"
           />
           <StatusCard 
-            title="Scrape Speed" 
+            title={t('scrapeSpeed')} 
             value={scrapingSpeed ? `${scrapingSpeed}/s` : "N/A"} 
-            description="Average items scraped per second" 
+            description={t('scrapeSpeedDescription')} 
           />
         </div>
         
