@@ -1,8 +1,8 @@
 
 import React, { memo } from 'react';
 import { useLanguage } from "@/contexts/LanguageContext";
-import ScrapeConfigCard from "@/components/ScrapeConfigCard";
 import { ScraperConfig } from "@/hooks/useScraper";
+import ScraperCard from "@/components/scraper/ScraperCard";
 
 interface ScraperGridProps {
   configs: ScraperConfig[];
@@ -12,7 +12,6 @@ interface ScraperGridProps {
   onScrape: (id: string, config: { url: string; depth: number }) => Promise<void>;
 }
 
-// Using memo to prevent unnecessary re-renders of the grid itself
 const ScraperGrid = memo(({
   configs,
   enabledScrapers,
@@ -25,7 +24,7 @@ const ScraperGrid = memo(({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {configs.map(config => (
-        <ScrapeConfigCard
+        <ScraperCard
           key={config.id}
           title={t(config.titleKey)}
           description={t(config.descriptionKey)}

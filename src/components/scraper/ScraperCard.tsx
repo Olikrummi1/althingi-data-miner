@@ -1,13 +1,14 @@
-import React, { useState, useRef, useEffect, memo } from "react";
+
+import React, { useState, useEffect, memo } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, StopCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import ScrapeConfigToggle from "./ScrapeConfigToggle";
+import ScrapeStatusBadge from "./ScrapeStatusBadge";
+import { useScrapeForm } from "@/hooks/useScrapeForm";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Loader2, StopCircle } from "lucide-react";
 import { stopScrapeJob } from "@/services/scrapeJobsService";
 
 type ScrapeConfigCardProps = {
@@ -20,7 +21,7 @@ type ScrapeConfigCardProps = {
   scrapeJobId?: string | null;
 };
 
-const ScrapeConfigCard = memo(({
+const ScraperCard = memo(({
   title,
   description,
   enabled,
@@ -29,14 +30,11 @@ const ScrapeConfigCard = memo(({
   activeJob,
   scrapeJobId
 }: ScrapeConfigCardProps) => {
-  const [isLoading, setIsLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState<string | null>(activeJob?.status || null);
   const [itemsScraped, setItemsScraped] = useState<number>(activeJob?.items_scraped || 0);
   const [isPolling, setIsPolling] = useState(false);
-  const urlRef = useRef<HTMLInputElement>(null);
-  const depthRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<number | null>(null);
-
+  
   const getDefaultUrl = () => {
     switch (title.toLowerCase()) {
       case "bills":
@@ -55,6 +53,14 @@ const ScrapeConfigCard = memo(({
         return `https://www.althingi.is/`;
     }
   };
+  
+  const defaultUrl = getDefaultUrl();
+  const { isLoading, urlRef, depthRef, handleSubmit } = useScrapeForm({
+    title,
+    onScrape,
+    enabled,
+    defaultUrl
+  });
 
   useEffect(() => {
     if (activeJob) {
@@ -118,26 +124,6 @@ const ScrapeConfigCard = memo(({
     };
   }, [scrapeJobId, jobStatus, itemsScraped, isPolling]);
 
-  const handleScrape = async () => {
-    if (!enabled) return;
-    
-    const url = urlRef.current?.value || getDefaultUrl();
-    const depthValue = depthRef.current?.value || "2";
-    const depth = parseInt(depthValue, 10);
-    
-    setIsLoading(true);
-    
-    try {
-      await onScrape({ url, depth });
-      toast.success(`Started scraping ${title}`);
-    } catch (error) {
-      console.error(`Error scraping ${title}:`, error);
-      toast.error(`Error starting ${title} scraper: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleStopScraping = async () => {
     if (!activeJob || !activeJob.id) return;
     
@@ -157,41 +143,6 @@ const ScrapeConfigCard = memo(({
     }
   };
 
-  const getStatusBadge = () => {
-    if (!jobStatus) return null;
-    
-    let color = "";
-    let text = jobStatus;
-    
-    switch(jobStatus) {
-      case "running":
-        color = "bg-yellow-200 text-yellow-800";
-        break;
-      case "completed":
-        color = "bg-green-200 text-green-800";
-        break;
-      case "failed":
-        color = "bg-red-200 text-red-800";
-        break;
-      case "stopped":
-        color = "bg-gray-200 text-gray-800";
-        text = "Stopped";
-        break;
-      case "pending":
-        color = "bg-blue-200 text-blue-800";
-        text = "Pending";
-        break;
-      default:
-        color = "bg-gray-200 text-gray-800";
-    }
-    
-    return (
-      <Badge className={color}>
-        {text} {jobStatus === "running" && itemsScraped > 0 && `(${itemsScraped} items)`}
-      </Badge>
-    );
-  };
-
   const isJobRunning = jobStatus === "running" || jobStatus === "pending";
 
   return (
@@ -199,24 +150,20 @@ const ScrapeConfigCard = memo(({
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{title}</CardTitle>
-          <Switch 
-            checked={enabled} 
-            onCheckedChange={onToggle} 
-            className="data-[state=checked]:bg-althingi-blue"
-          />
+          <ScrapeConfigToggle enabled={enabled} onToggle={onToggle} />
         </div>
         <div className="flex items-center justify-between">
           <CardDescription>{description}</CardDescription>
-          {getStatusBadge()}
+          <ScrapeStatusBadge status={jobStatus} itemsScraped={itemsScraped} />
         </div>
       </CardHeader>
       <CardContent className="flex-grow">
-        <div className="space-y-4">
+        <form id={`scrape-form-${title}`} onSubmit={handleSubmit} className="space-y-4">
           <div className="grid w-full items-center gap-1.5">
             <Label htmlFor={`url-${title}`}>URL</Label>
             <Input 
               id={`url-${title}`} 
-              defaultValue={getDefaultUrl()}
+              defaultValue={defaultUrl}
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={urlRef}
@@ -236,7 +183,7 @@ const ScrapeConfigCard = memo(({
               ref={depthRef}
             />
           </div>
-        </div>
+        </form>
       </CardContent>
       <CardFooter>
         {isJobRunning ? (
@@ -250,7 +197,8 @@ const ScrapeConfigCard = memo(({
           <Button 
             className="w-full bg-althingi-blue hover:bg-althingi-darkBlue" 
             disabled={!enabled || isLoading} 
-            onClick={handleScrape}
+            type="submit"
+            form={`scrape-form-${title}`}
           >
             {isLoading ? (
               <>
@@ -266,6 +214,6 @@ const ScrapeConfigCard = memo(({
   );
 });
 
-ScrapeConfigCard.displayName = 'ScrapeConfigCard';
+ScraperCard.displayName = 'ScraperCard';
 
-export default ScrapeConfigCard;
+export default ScraperCard;
