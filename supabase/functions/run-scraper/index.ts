@@ -32,6 +32,19 @@ function getValidItemType(scraperType: string): string {
   }
 }
 
+// Helper function to get the base URL based on scraper type
+function getBaseUrl(scraperType: string): string {
+  switch(scraperType) {
+    case "bills": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/";
+    case "votes": return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
+    case "speeches": return "https://www.althingi.is/altext/raeda/";
+    case "mps": return "https://www.althingi.is/thingmenn/althingismenn/";
+    case "committees": return "https://www.althingi.is/thingnefndir/fastanefndir/";
+    case "issues": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
+    default: return `https://www.althingi.is/`;
+  }
+}
+
 // Actual scraping function for Althingi
 async function scrapeData(scraperType: string, config: any) {
   console.log(`Scraping data type: ${scraperType} with config:`, config);
@@ -39,8 +52,8 @@ async function scrapeData(scraperType: string, config: any) {
   // Get the valid item type for database insertion
   const validType = getValidItemType(scraperType);
   
-  // Define the base URL if not provided
-  const baseUrl = config.url || `https://althingi.is/${scraperType}`;
+  // Define the base URL - use provided URL or default for the type
+  const baseUrl = config.url || getBaseUrl(scraperType);
   const maxDepth = config.depth || 2;
   
   // Set up the user agent for fetching
@@ -101,49 +114,49 @@ async function scrapeData(scraperType: string, config: any) {
         // Extract data based on type
         switch (validType) {
           case "bill":
-            // Extract bill information
-            const billTitle = doc.querySelector("h1, .bill-title")?.textContent?.trim();
-            const billContent = doc.querySelector(".bill-content, .main-content")?.textContent?.trim();
+            // Extract bill information - using Althingi site structure
+            const billTitle = doc.querySelector(".PL_FERILL h1, .motionTitle, .text-center h1")?.textContent?.trim();
+            const billContent = doc.querySelector(".PL_FERILL, .motionContent, .toggle-box")?.textContent?.trim();
             title = billTitle || `Bill from ${url}`;
             content = billContent || "";
             break;
           
           case "vote":
-            // Extract voting information
-            const voteTitle = doc.querySelector("h1, .vote-title")?.textContent?.trim();
-            const voteResults = doc.querySelector(".vote-results, .voting-record")?.textContent?.trim();
+            // Extract voting information - using Althingi site structure
+            const voteTitle = doc.querySelector(".voting-title h1, h1.atmHeader")?.textContent?.trim();
+            const voteResults = doc.querySelector(".voting-results, .yes-votes, .no-votes, table.atmTable")?.textContent?.trim();
             title = voteTitle || `Vote from ${url}`;
             content = voteResults || "";
             break;
           
           case "speech":
-            // Extract speech information
-            const speechTitle = doc.querySelector("h1, .speech-title")?.textContent?.trim();
-            const speechText = doc.querySelector(".speech-content, .speech-text")?.textContent?.trim();
+            // Extract speech information - using Althingi site structure
+            const speechTitle = doc.querySelector(".raedur h1, h1.speechTitle")?.textContent?.trim();
+            const speechText = doc.querySelector(".raedur-content, div.speech")?.textContent?.trim();
             title = speechTitle || `Speech from ${url}`;
             content = speechText || "";
             break;
           
           case "mp":
-            // Extract MP information
-            const mpName = doc.querySelector("h1, .mp-name")?.textContent?.trim();
-            const mpBio = doc.querySelector(".mp-bio, .member-info")?.textContent?.trim();
+            // Extract MP information - using Althingi site structure
+            const mpName = doc.querySelector(".thingmadur h1, .mp-name, h1.name")?.textContent?.trim();
+            const mpBio = doc.querySelector(".thingmadur-info, .member-info, .biography")?.textContent?.trim();
             title = mpName || `MP from ${url}`;
             content = mpBio || "";
             break;
           
           case "committee":
-            // Extract committee information
-            const committeeName = doc.querySelector("h1, .committee-name")?.textContent?.trim();
-            const committeeDesc = doc.querySelector(".committee-desc, .committee-info")?.textContent?.trim();
+            // Extract committee information - using Althingi site structure
+            const committeeName = doc.querySelector(".nefnd h1, .committee-title, h1.title")?.textContent?.trim();
+            const committeeDesc = doc.querySelector(".nefnd-content, .committee-members, .committee-info")?.textContent?.trim();
             title = committeeName || `Committee from ${url}`;
             content = committeeDesc || "";
             break;
           
           case "issue":
-            // Extract issue information
-            const issueName = doc.querySelector("h1, .issue-name")?.textContent?.trim();
-            const issueDesc = doc.querySelector(".issue-desc, .issue-content")?.textContent?.trim();
+            // Extract issue information - using Althingi site structure
+            const issueName = doc.querySelector(".thingmal h1, .issue-title, h1.title")?.textContent?.trim();
+            const issueDesc = doc.querySelector(".thingmal-content, .issue-description, .content")?.textContent?.trim();
             title = issueName || `Issue from ${url}`;
             content = issueDesc || "";
             break;

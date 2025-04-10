@@ -26,10 +26,30 @@ const ScrapeConfigCard = ({
   const urlRef = useRef<HTMLInputElement>(null);
   const depthRef = useRef<HTMLInputElement>(null);
 
+  // Helper function to get the correct default URL based on the scraper type
+  const getDefaultUrl = () => {
+    switch (title.toLowerCase()) {
+      case "bills":
+        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill/";
+      case "votes":
+        return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
+      case "speeches":
+        return "https://www.althingi.is/altext/raeda/";
+      case "mps":
+        return "https://www.althingi.is/thingmenn/althingismenn/";
+      case "committees":
+        return "https://www.althingi.is/thingnefndir/fastanefndir/";
+      case "issues":
+        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
+      default:
+        return `https://www.althingi.is/`;
+    }
+  };
+
   const handleScrape = async () => {
     if (!enabled) return;
     
-    const url = urlRef.current?.value || `https://althingi.is/`;
+    const url = urlRef.current?.value || getDefaultUrl();
     const depthValue = depthRef.current?.value || "2";
     const depth = parseInt(depthValue, 10);
     
@@ -66,7 +86,7 @@ const ScrapeConfigCard = ({
             <Label htmlFor={`url-${title}`}>URL</Label>
             <Input 
               id={`url-${title}`} 
-              defaultValue={`https://althingi.is/${title.toLowerCase()}`}
+              defaultValue={getDefaultUrl()}
               disabled={!enabled} 
               className="bg-background"
               ref={urlRef}
