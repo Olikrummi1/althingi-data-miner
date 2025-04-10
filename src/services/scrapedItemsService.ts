@@ -30,8 +30,8 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
     // Using RPC function to get item counts by type
-    const { data, error } = await supabase
-      .rpc('get_item_counts_by_type');
+    // Cast the rpc function to any to avoid TypeScript errors with functions not in the types
+    const { data, error } = await (supabase.rpc as any)('get_item_counts_by_type');
 
     if (error) {
       console.error("Error fetching item counts:", error);
