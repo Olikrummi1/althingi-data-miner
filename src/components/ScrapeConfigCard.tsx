@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 
 type ScrapeConfigCardProps = {
@@ -12,7 +12,7 @@ type ScrapeConfigCardProps = {
   description: string;
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
-  onScrape: () => void;
+  onScrape: (config: { url: string; depth: number }) => Promise<void>;
 };
 
 const ScrapeConfigCard = ({
@@ -23,14 +23,21 @@ const ScrapeConfigCard = ({
   onScrape
 }: ScrapeConfigCardProps) => {
   const [isLoading, setIsLoading] = useState(false);
+  const urlRef = useRef<HTMLInputElement>(null);
+  const depthRef = useRef<HTMLInputElement>(null);
 
   const handleScrape = async () => {
+    if (!enabled) return;
+    
+    const url = urlRef.current?.value || "https://althingi.is/";
+    const depthValue = depthRef.current?.value || "2";
+    const depth = parseInt(depthValue, 10);
+    
     setIsLoading(true);
     
     try {
-      // Call the scrape function
-      await onScrape();
-      toast.success(`Started scraping ${title}`);
+      // Call the scrape function with config values
+      await onScrape({ url, depth });
     } catch (error) {
       console.error(`Error scraping ${title}:`, error);
       toast.error(`Error starting ${title} scraper: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -61,6 +68,7 @@ const ScrapeConfigCard = ({
               defaultValue="https://althingi.is/" 
               disabled={!enabled} 
               className="bg-background"
+              ref={urlRef}
             />
           </div>
           
@@ -74,6 +82,7 @@ const ScrapeConfigCard = ({
               max="5" 
               disabled={!enabled} 
               className="bg-background"
+              ref={depthRef}
             />
           </div>
         </div>

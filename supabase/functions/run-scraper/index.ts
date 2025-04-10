@@ -14,19 +14,39 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Get valid item types from the database
+const VALID_TYPES = ["bill", "vote", "speech", "mp", "committee", "issue"];
+
+// Map the scraper type to a valid database item type
+function getValidItemType(scraperType: string): string {
+  // Convert plural to singular where needed
+  switch(scraperType) {
+    case "bills": return "bill";
+    case "votes": return "vote";
+    case "speeches": return "speech";
+    case "mps": return "mp";
+    case "committees": return "committee";
+    case "issues": return "issue";
+    default: return scraperType;
+  }
+}
+
 // Mock implementation of a scraper
-async function scrapeData(type: string, config: any) {
-  console.log(`Scraping data type: ${type} with config:`, config);
+async function scrapeData(scraperType: string, config: any) {
+  console.log(`Scraping data type: ${scraperType} with config:`, config);
+  
+  // Get the valid item type for database insertion
+  const validType = getValidItemType(scraperType);
   
   // In a real implementation, you would call your scraping code here
   // For this example, we'll simulate scraping by waiting and returning mock data
   await new Promise(resolve => setTimeout(resolve, 2000));
   
-  // Mock data for different types
+  // Mock data for different types with the correct type value for database insertion
   const mockData = [
-    { title: `${type} item 1`, url: `https://althingi.is/${type}/1`, type },
-    { title: `${type} item 2`, url: `https://althingi.is/${type}/2`, type },
-    { title: `${type} item 3`, url: `https://althingi.is/${type}/3`, type }
+    { title: `${scraperType} item 1`, url: `https://althingi.is/${scraperType}/1`, type: validType },
+    { title: `${scraperType} item 2`, url: `https://althingi.is/${scraperType}/2`, type: validType },
+    { title: `${scraperType} item 3`, url: `https://althingi.is/${scraperType}/3`, type: validType }
   ];
   
   return mockData;
@@ -120,6 +140,7 @@ serve(async (req) => {
           );
         
         if (error) {
+          console.error("Error inserting scraped items:", error);
           throw new Error(`Failed to insert scraped items: ${error.message}`);
         }
       }
@@ -153,12 +174,12 @@ serve(async (req) => {
         .update({ 
           status: "failed", 
           completed_at: new Date().toISOString(),
-          error_message: error.message 
+          error_message: error instanceof Error ? error.message : String(error)
         })
         .eq("id", jobId);
       
       return new Response(
-        JSON.stringify({ error: error.message }),
+        JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
         { 
           status: 500, 
           headers: { 

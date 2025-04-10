@@ -84,17 +84,17 @@ const ScraperPage = () => {
     }));
   };
 
-  const handleScrape = async (id: string) => {
+  const handleScrape = async (id: string, config: { url: string; depth: number }) => {
     if (!settings) {
       toast.error("Scrape settings not loaded");
       return;
     }
     
     try {
-      // Create a scrape job in the database
+      // Create a scrape job in the database with the provided config
       const job = await createScrapeJob(id as any, {
-        url: `https://althingi.is/${id}`,
-        depth: 2,
+        url: config.url,
+        depth: config.depth,
         ...settings
       });
       
@@ -107,7 +107,11 @@ const ScraperPage = () => {
         body: { 
           type: id, 
           jobId: job.id,
-          config: settings
+          config: {
+            ...settings,
+            url: config.url,
+            depth: config.depth
+          }
         }
       });
       
@@ -116,6 +120,7 @@ const ScraperPage = () => {
         throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
       }
       
+      toast.success(`Started scraping ${t(id)}`);
       return data;
     } catch (error) {
       console.error("Error invoking scraper function:", error);
@@ -144,7 +149,8 @@ const ScraperPage = () => {
     // Run each enabled scraper
     for (const id of enabledScraperIds) {
       try {
-        await handleScrape(id);
+        // Use default config for batch scraping
+        await handleScrape(id, { url: `https://althingi.is/${id}`, depth: 2 });
         successCount++;
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
@@ -200,7 +206,7 @@ const ScraperPage = () => {
               description={t(config.descriptionKey)}
               enabled={enabledScrapers[config.id] || false}
               onToggle={(enabled) => toggleScraper(config.id, enabled)}
-              onScrape={() => handleScrape(config.id)}
+              onScrape={(configValues) => handleScrape(config.id, configValues)}
             />
           ))}
         </div>
