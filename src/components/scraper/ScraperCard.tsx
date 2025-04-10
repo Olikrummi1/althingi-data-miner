@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, memo } from "react";
+import React, { useState, useEffect, useRef, memo } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import ScrapeConfigToggle from "./ScrapeConfigToggle";
@@ -10,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Loader2, StopCircle } from "lucide-react";
 import { stopScrapeJob } from "@/services/scrapeJobsService";
+import { toast } from "sonner";
 
 type ScrapeConfigCardProps = {
   title: string;
