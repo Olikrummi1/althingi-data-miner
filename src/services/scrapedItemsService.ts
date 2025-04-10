@@ -29,9 +29,8 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
-    // Using RPC function to get item counts by type
-    // Cast the rpc function to any to avoid TypeScript errors with functions not in the types
-    const { data, error } = await (supabase.rpc as any)('get_item_counts_by_type');
+    // Using the properly created RPC function to get item counts by type
+    const { data, error } = await supabase.rpc('get_item_counts_by_type');
 
     if (error) {
       console.error("Error fetching item counts:", error);
@@ -39,12 +38,15 @@ export async function getItemCountsByType(): Promise<{ name: string; count: numb
       return [];
     }
 
-    if (!data) return [];
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      console.log("No data returned from get_item_counts_by_type");
+      return [];
+    }
     
-    // Transform the data to match the expected format
-    return (data as Array<{type: string, count: number}>).map(item => ({
+    // Transform the data to match the expected format for the chart
+    return data.map(item => ({
       name: item.type.charAt(0).toUpperCase() + item.type.slice(1),
-      count: item.count
+      count: Number(item.count)
     }));
   } catch (error) {
     console.error("Error in getItemCountsByType:", error);

@@ -122,7 +122,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_item_counts_by_type: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          type: string
+          count: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
