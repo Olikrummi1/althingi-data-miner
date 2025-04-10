@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FileText, Vote, User, Users, Folder, Bookmark, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 
 export type RecentItem = {
   id: string;
@@ -11,6 +12,7 @@ export type RecentItem = {
   title: string;
   timestamp: string;
   url: string;
+  metadata?: Record<string, any>;
 };
 
 const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
@@ -50,6 +52,31 @@ const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
     }
   };
 
+  // Helper to render MP-specific metadata if available
+  const renderMpMetadata = (item: RecentItem) => {
+    if (item.type !== "mp" || !item.metadata) return null;
+    
+    return (
+      <div className="mt-2 space-y-1">
+        {item.metadata.party && (
+          <Badge variant="outline" className="mr-1">
+            {item.metadata.party}
+          </Badge>
+        )}
+        {item.metadata.constituency && (
+          <Badge variant="outline" className="mr-1">
+            {item.metadata.constituency}
+          </Badge>
+        )}
+        {item.metadata.position && (
+          <Badge variant="outline" className="text-xs">
+            {item.metadata.position}
+          </Badge>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Card className="h-full">
       <CardHeader>
@@ -76,6 +103,7 @@ const RecentItemsList = ({ items }: { items: RecentItem[] }) => {
                       <span className="mx-2">•</span>
                       <span className="capitalize">{item.type}</span>
                     </div>
+                    {renderMpMetadata(item)}
                   </div>
                   <Button 
                     variant="outline" 

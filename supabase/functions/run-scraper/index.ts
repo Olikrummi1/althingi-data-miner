@@ -1,5 +1,4 @@
 
-// Update imports to use proper syntax for edge functions
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -38,8 +37,8 @@ function getBaseUrl(scraperType: string): string {
     case "bills": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
     case "votes": return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
     case "speeches": return "https://www.althingi.is/altext/raedur/";
-    case "mps": return "https://www.althingi.is/altext/cv/is/"; // Updated more accessible URL
-    case "committees": return "https://www.althingi.is/thingnefndir/nefndir/";
+    case "mps": return "https://www.althingi.is/thingmenn/althingismenn/"; // Updated to correct MPs URL
+    case "committees": return "https://www.althingi.is/thingnefndir/fastanefndir/";
     case "issues": return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
     default: return `https://www.althingi.is/`;
   }
@@ -65,6 +64,130 @@ function normalizeUrl(url: string, baseUrl: string): string {
   return `${baseUrl}${url}`;
 }
 
+// Specific function to extract MP data from MPs list page
+async function extractMpListData(doc: any, baseUrl: string): Promise<any[]> {
+  const mps = [];
+  console.log("Extracting MPs data from list page");
+  
+  // Get the MP table - using the structure we see in the image
+  const table = doc.querySelector("table");
+  
+  if (!table) {
+    console.log("No table found on the MPs page");
+    return [];
+  }
+  
+  // Get all rows except the header row
+  const rows = table.querySelectorAll("tr:not(:first-child)");
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cells = row.querySelectorAll("td");
+    
+    if (cells.length >= 4) { // Make sure we have enough cells
+      const nameCell = cells[0];
+      const partyCell = cells[3];
+      const constituencyCell = cells[2];
+      
+      // Extract the link to the MP's profile page
+      const link = nameCell.querySelector("a");
+      const mpUrl = link ? link.getAttribute("href") : null;
+      const normalizedMpUrl = mpUrl ? normalizeUrl(mpUrl, baseUrl) : null;
+      
+      // Get the MP's name and other data
+      const name = nameCell.textContent?.trim() || "";
+      const party = partyCell.textContent?.trim() || "";
+      const constituency = constituencyCell.textContent?.trim() || "";
+      
+      if (name && normalizedMpUrl) {
+        mps.push({
+          title: name,
+          content: `MP from ${constituency}, representing ${party}`,
+          url: normalizedMpUrl,
+          type: "mp",
+          metadata: {
+            party,
+            constituency,
+            source: "mp_list"
+          },
+          profileUrl: normalizedMpUrl
+        });
+      }
+    }
+  }
+  
+  console.log(`Found ${mps.length} MPs in the list`);
+  return mps;
+}
+
+// Function to extract data from an MP's profile page
+async function extractMpProfileData(doc: any, url: string, baseData: any = null): Promise<any> {
+  console.log(`Extracting MP profile data from ${url}`);
+  
+  // Initialize with base data if provided
+  const mpData = baseData ? { ...baseData } : {
+    title: "",
+    content: "",
+    url: url,
+    type: "mp",
+    metadata: {}
+  };
+  
+  // Extract the MP's name if not already set
+  if (!mpData.title || mpData.title.length === 0) {
+    const nameElement = doc.querySelector("h1") || doc.querySelector(".name") || doc.querySelector("header h2");
+    if (nameElement) {
+      mpData.title = nameElement.textContent?.trim() || "";
+    }
+  }
+  
+  // Try to get MP's image
+  const imageElement = doc.querySelector("img[src*='myndir']") || doc.querySelector(".profile-image img") || doc.querySelector("img[alt*='mynd']");
+  if (imageElement) {
+    const imageSrc = imageElement.getAttribute("src");
+    if (imageSrc) {
+      mpData.metadata.imageUrl = normalizeUrl(imageSrc, url);
+    }
+  }
+  
+  // Try to extract position
+  const positionElement = doc.querySelector(".position") || doc.querySelector("[class*='position']") || doc.querySelector(".title") || doc.querySelector("h3");
+  if (positionElement) {
+    mpData.metadata.position = positionElement.textContent?.trim() || "";
+  }
+  
+  // Try to extract biography/about
+  const bioElement = doc.querySelector(".bio") || doc.querySelector(".about") || doc.querySelector(".description") || doc.querySelector("article p");
+  if (bioElement) {
+    mpData.content = bioElement.textContent?.trim() || mpData.content;
+  }
+  
+  // Extract contact information
+  const emailElement = doc.querySelector("[href^='mailto:']") || doc.querySelector(".email") || doc.querySelector("a[href*='@']");
+  if (emailElement) {
+    const email = emailElement.getAttribute("href")?.replace("mailto:", "") || emailElement.textContent?.trim();
+    if (email) {
+      mpData.metadata.email = email;
+    }
+  }
+  
+  // Extract social media links
+  const socialLinks = doc.querySelectorAll("a[href*='facebook'], a[href*='twitter'], a[href*='instagram']");
+  if (socialLinks.length > 0) {
+    mpData.metadata.socialLinks = [];
+    for (let i = 0; i < socialLinks.length; i++) {
+      const link = socialLinks[i];
+      const href = link.getAttribute("href");
+      if (href) {
+        mpData.metadata.socialLinks.push(href);
+      }
+    }
+  }
+  
+  console.log(`Extracted profile data for ${mpData.title}`);
+  return mpData;
+}
+
 // Actual scraping function for Althingi
 async function scrapeData(scraperType: string, config: any) {
   console.log(`Scraping data type: ${scraperType} with config:`, config);
@@ -77,7 +200,7 @@ async function scrapeData(scraperType: string, config: any) {
   const maxDepth = config.depth || 2;
   
   // Set up the user agent for fetching - use a more realistic user agent
-  const userAgent = config.user_agent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+  const userAgent = config.user_agent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36';
   
   // Set up throttling
   const throttle = config.throttle || 1000;
@@ -86,6 +209,9 @@ async function scrapeData(scraperType: string, config: any) {
   const urlsToVisit = [baseUrl];
   const visitedUrls = new Set<string>();
   const scrapedItems = [];
+  
+  // For MP pages, we'll track MPs separately
+  let mpProfiles = [];
   
   // Process each URL up to the max depth
   for (let depth = 0; depth < maxDepth && urlsToVisit.length > 0; depth++) {
@@ -106,12 +232,14 @@ async function scrapeData(scraperType: string, config: any) {
           await new Promise(resolve => setTimeout(resolve, throttle));
         }
         
+        console.log(`Fetching ${url}...`);
+        
         // Fetch the page
         const response = await fetch(url, {
           headers: { 
             'User-Agent': userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Language': 'en-US,en;q=0.9,is;q=0.8',
           }
         });
         
@@ -131,7 +259,48 @@ async function scrapeData(scraperType: string, config: any) {
           continue;
         }
         
-        // Logic specific to each type of content
+        // Special handling for MPs list page
+        if (validType === "mp" && (url === baseUrl || url === getBaseUrl("mps"))) {
+          console.log("Processing MPs list page");
+          const mpList = await extractMpListData(doc, baseUrl);
+          
+          // Add MPs to scraped items
+          for (const mp of mpList) {
+            scrapedItems.push(mp);
+            
+            // Add MP profile URLs to visit if we're not at max depth
+            if (depth < maxDepth - 1 && mp.profileUrl) {
+              urlsToVisit.push(mp.profileUrl);
+              mpProfiles.push({
+                url: mp.profileUrl,
+                baseData: mp
+              });
+            }
+          }
+          
+          // Skip the generic extraction below
+          continue;
+        }
+        
+        // Check if this is an MP profile page we're already tracking
+        const mpProfile = mpProfiles.find(p => p.url === url);
+        if (validType === "mp" && mpProfile) {
+          console.log(`Processing MP profile page for URL: ${url}`);
+          const profileData = await extractMpProfileData(doc, url, mpProfile.baseData);
+          
+          // Update or add the MP data
+          const existingIndex = scrapedItems.findIndex(item => item.url === url);
+          if (existingIndex >= 0) {
+            scrapedItems[existingIndex] = profileData;
+          } else {
+            scrapedItems.push(profileData);
+          }
+          
+          // Skip the generic extraction below
+          continue;
+        }
+        
+        // Generic extraction for other page types
         let title = "";
         let content = "";
         
@@ -161,14 +330,6 @@ async function scrapeData(scraperType: string, config: any) {
             content = speechText || "";
             break;
           
-          case "mp":
-            // Extract MP information - using Althingi site structure
-            const mpName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
-            const mpBio = doc.querySelector(".bio, .info, .about")?.textContent?.trim();
-            title = mpName || `MP from ${url}`;
-            content = mpBio || "";
-            break;
-          
           case "committee":
             // Extract committee information - using Althingi site structure
             const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
@@ -191,8 +352,8 @@ async function scrapeData(scraperType: string, config: any) {
             content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
         }
         
-        // Add the scraped item
-        if (title) {
+        // Add the scraped item if it's not a known MP profile we already processed
+        if (title && !mpProfile) {
           // Ensure the URL is properly formatted for database storage
           const normalizedUrl = normalizeUrl(url, baseUrl);
           
@@ -323,7 +484,8 @@ serve(async (req) => {
               type: item.type,
               content: item.content,
               raw_html: item.raw_html,
-              scraped_at: item.scraped_at
+              scraped_at: item.scraped_at,
+              metadata: item.metadata // Include metadata field
             }))
           );
         
