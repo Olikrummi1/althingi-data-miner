@@ -5,6 +5,12 @@ import { Database } from "@/integrations/supabase/types";
 
 export type ScrapedItem = Database["public"]["Tables"]["scraped_items"]["Row"];
 
+// Define the return type of get_item_counts_by_type RPC function
+type ItemCountsByType = {
+  type: string;
+  count: number;
+}
+
 export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
   try {
     const { data, error } = await supabase
@@ -30,7 +36,8 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
     // Using the properly created RPC function to get item counts by type
-    const { data, error } = await supabase.rpc('get_item_counts_by_type');
+    // Add explicit typing for the RPC function
+    const { data, error } = await supabase.rpc<ItemCountsByType[]>('get_item_counts_by_type');
 
     if (error) {
       console.error("Error fetching item counts:", error);
