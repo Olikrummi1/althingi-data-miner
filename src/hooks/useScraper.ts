@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -72,15 +71,14 @@ export default function useScraper() {
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [totalItemsScraped, setTotalItemsScraped] = useState(0);
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
+  const [isPendingJobCompletion, setIsPendingJobCompletion] = useState(false);
 
   useEffect(() => {
-    
     const loadSettings = async () => {
       setIsSettingsLoading(true);
       try {
         const settings = await getScrapeSettings();
         if (settings) {
-          // Modify settings to always save raw HTML
           setSettings({
             ...settings,
             save_raw_html: true
@@ -98,7 +96,6 @@ export default function useScraper() {
   }, []);
 
   useEffect(() => {
-    
     const loadActiveJobs = async () => {
       try {
         if (isLoadingJobs) {
@@ -137,6 +134,10 @@ export default function useScraper() {
         if (totalItems !== totalItemsScraped) {
           setTotalItemsScraped(totalItems);
         }
+        
+        if (Object.keys(jobsByType).length === 0 && isPendingJobCompletion) {
+          setIsPendingJobCompletion(false);
+        }
       } catch (error) {
         console.error("Error loading active jobs:", error);
       } finally {
@@ -151,7 +152,7 @@ export default function useScraper() {
     const intervalId = setInterval(loadActiveJobs, 2000);
     
     return () => clearInterval(intervalId);
-  }, [activeJobs, totalItemsScraped, isLoadingJobs]);
+  }, [activeJobs, totalItemsScraped, isLoadingJobs, isPendingJobCompletion]);
 
   const toggleScraper = (id: string, enabled: boolean) => {
     setEnabledScrapers(prev => ({
@@ -166,7 +167,6 @@ export default function useScraper() {
       return;
     }
     
-    
     const activeJobsCount = Object.values(activeJobs).filter(job => 
       job.status === "running" || job.status === "pending"
     ).length;
@@ -177,8 +177,11 @@ export default function useScraper() {
     }
     
     try {
-      toast.info(`Setting up ${id} scraper...`);
+      const setupToastId = toast.info(`Setting up ${id} scraper...`, {
+        duration: 10000
+      });
       
+      setIsPendingJobCompletion(true);
       
       let customConfig = { ...config };
       if (id === "mps") {
@@ -211,7 +214,6 @@ export default function useScraper() {
           } as ActiveJob
         }));
         
-        
         const enhancedConfig = {
           ...settings,
           url: customConfig.url,
@@ -224,7 +226,6 @@ export default function useScraper() {
           timeout_seconds: Math.min(settings.timeout_seconds, 30) 
         };
         
-        
         let retryCount = 0;
         const maxRetries = 2;
         let success = false;
@@ -233,9 +234,12 @@ export default function useScraper() {
         while (retryCount <= maxRetries && !success) {
           try {
             if (retryCount > 0) {
-              
               await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
               toast.info(`Retry attempt ${retryCount} for ${id} scraper...`);
+            }
+            
+            if (setupToastId) {
+              toast.dismiss(setupToastId);
             }
             
             const { data, error } = await supabase.functions.invoke("run-scraper", {
@@ -254,6 +258,7 @@ export default function useScraper() {
             }
             
             success = true;
+            
             setActiveJobs(prev => ({
               ...prev,
               [id]: { 
@@ -264,6 +269,9 @@ export default function useScraper() {
             
             toast.success(`Started scraping ${id}`);
             setConsecutiveErrors(0); 
+            
+            setIsPendingJobCompletion(true);
+            
             return data;
           } catch (error: any) {
             console.error(`Error invoking scraper function (attempt ${retryCount + 1}):`, error);
@@ -271,7 +279,6 @@ export default function useScraper() {
             retryCount++;
           }
         }
-        
         
         await updateScrapeJobStatus(job.id, "failed", 0, lastError?.message || "Max retries exceeded");
         
@@ -281,9 +288,7 @@ export default function useScraper() {
           toast.error(`Failed to start ${id} scraper after ${maxRetries} attempts`);
         }
         
-        
         setConsecutiveErrors(prev => prev + 1);
-        
         
         setActiveJobs(prev => {
           const newJobs = { ...prev };
@@ -291,10 +296,11 @@ export default function useScraper() {
           return newJobs;
         });
         
+        setIsPendingJobCompletion(false);
+        
         throw lastError || new Error("Max retries exceeded");
       } catch (error: any) {
         console.error(`Error scraping ${id}:`, error);
-        
         
         if (error.message?.includes("timeout") || error.message?.includes("busy")) {
           toast.error(`Server busy or timed out. Try again with smaller depth and max items.`);
@@ -303,7 +309,6 @@ export default function useScraper() {
         } else {
           await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
         }
-        
         
         if (consecutiveErrors >= 2) {
           toast.error("Multiple scrape attempts failed. Try these troubleshooting steps:", {
@@ -321,18 +326,19 @@ export default function useScraper() {
           return newJobs;
         });
         
+        setIsPendingJobCompletion(false);
+        
         throw error;
       }
     } catch (error: any) {
       console.error(`Error scraping ${id}:`, error);
       toast.error(`Error starting ${id} scraper: ${error.message || "Unknown error"}`);
+      setIsPendingJobCompletion(false);
       throw error;
     }
   };
 
   const runAllEnabled = async () => {
-    
-    
     const enabledScraperIds = Object.entries(enabledScrapers)
       .filter(([_, enabled]) => enabled)
       .map(([id]) => id);
@@ -344,7 +350,6 @@ export default function useScraper() {
       return;
     }
     
-    
     if (enabledCount > 2) {
       toast.warning("Running multiple scrapers simultaneously may cause timeouts. Consider running fewer at once.");
     }
@@ -355,9 +360,7 @@ export default function useScraper() {
     let successCount = 0;
     let errorCount = 0;
     
-    
     const prioritizedScrapers = [...enabledScraperIds].sort((a, b) => {
-      
       if (a === "mps") return 1;
       if (b === "mps") return -1;
       return 0;
@@ -366,7 +369,6 @@ export default function useScraper() {
     for (const id of prioritizedScrapers) {
       try {
         const baseUrl = getBaseUrlForScraper(id);
-        
         
         const maxDepth = id === "mps" ? 1 : 2;
         const maxItems = id === "mps" ? 50 : 100;
@@ -378,12 +380,10 @@ export default function useScraper() {
         });
         successCount++;
         
-        
         await new Promise(resolve => setTimeout(resolve, 3000));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
         errorCount++;
-        
         
         if (errorCount >= 2) {
           toast.error("Multiple errors occurred. Stopping batch scrape to prevent overloading.");
@@ -433,6 +433,7 @@ export default function useScraper() {
     isLoadingJobs,
     totalItemsScraped,
     runningJobsCount,
+    isPendingJobCompletion,
     toggleScraper,
     handleScrape,
     runAllEnabled

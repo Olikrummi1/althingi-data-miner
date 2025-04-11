@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -23,10 +22,10 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-const EDGE_FUNCTION_TIMEOUT_MS = 20000; // 20 seconds (reduced from 25s)
-const MAX_ITEMS_PER_TYPE = 200; // Reduced from 500
-const BATCH_SIZE = 10; // Reduced batch size to save more frequently
-const SAVE_INTERVAL_MS = 3000; // Save more frequently
+const EDGE_FUNCTION_TIMEOUT_MS = 25000; // 25 seconds
+const MAX_ITEMS_PER_TYPE = 200;
+const BATCH_SIZE = 10;
+const SAVE_INTERVAL_MS = 2500; // Save more frequently, every 2.5 seconds
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -149,27 +148,21 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
-// Function to extract all text from a document
 function extractAllTextFromDocument(doc: any): string {
   if (!doc) return "";
   
-  // Get all text nodes from the document body
   const textContent = doc.body ? doc.body.textContent : doc.textContent;
   
-  // Clean up the text (remove excess whitespace)
   return textContent
     ? textContent.replace(/\s+/g, ' ').trim()
     : "";
 }
 
-// Function to extract all text from HTML string
 function extractAllTextFromHtml(html: string): string {
   if (!html) return "";
   
-  // Simple regex to strip HTML tags
   const textContent = html.replace(/<[^>]*>/g, ' ');
   
-  // Clean up the text (remove excess whitespace)
   return textContent.replace(/\s+/g, ' ').trim();
 }
 
@@ -203,12 +196,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = Math.min(config.depth || 2, 3); // Reduced max depth
-  const throttle = Math.max(config.throttle || 1000, 300); // Increased minimum throttle
-  const saveRawHtml = true; // Always save raw HTML
-  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000); // Reduced maximum timeout
-  const exploreBreadth = Math.min(config.explore_breadth || 10, 10); // Reduced breadth to explore
-  const maxItems = Math.min(config.max_items || 100, MAX_ITEMS_PER_TYPE); // Lower default and cap
+  const maxDepth = Math.min(config.depth || 2, 3);
+  const throttle = Math.max(config.throttle || 1000, 300);
+  const saveRawHtml = true;
+  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000);
+  const exploreBreadth = Math.min(config.explore_breadth || 10, 10);
+  const maxItems = Math.min(config.max_items || 100, MAX_ITEMS_PER_TYPE);
   
   const { data: runningJobs } = await supabase
     .from("scrape_jobs")
@@ -268,7 +261,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   let urlsToVisit: string[] = [];
   
   if (scraperType === "mps") {
-    urlsToVisit = getMpUrls().slice(0, 2); // Limit initial MP URLs
+    urlsToVisit = getMpUrls().slice(0, 2);
   } else {
     const baseUrl = config.url || getBaseUrl(scraperType);
     urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType).slice(0, 2)];
@@ -313,9 +306,16 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       
       try {
         console.log(`Saving batch of ${pendingItems.length} items to database...`);
+        
+        const sanitizedItems = pendingItems.map(item => ({
+          ...item,
+          content: item.content ? item.content.replace(/\u0000/g, '') : item.content,
+          raw_html: item.raw_html ? item.raw_html.replace(/\u0000/g, '') : item.raw_html
+        }));
+        
         const { error } = await supabase
           .from("scraped_items")
-          .insert(pendingItems);
+          .insert(sanitizedItems);
         
         if (error) {
           console.error("Error saving batch to database:", error);
@@ -372,7 +372,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           .eq("id", jobId);
         console.log(`Updated job status: ${itemsScraped} items scraped`);
       }
-    }, 2000); // More frequent updates
+    }, 2000);
     
     for (const startUrl of urlsToVisit) {
       if (visitedUrls.has(startUrl) || isTimedOut) continue;
@@ -385,7 +385,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
         
         const nextDepthUrls: string[] = [];
         
-        const urlsToProcess = currentDepthUrls.slice(0, Math.min(20, currentDepthUrls.length)); 
+        const urlsToProcess = currentDepthUrls.slice(0, Math.min(20, currentDepthUrls.length));
         
         for (const url of urlsToProcess) {
           if (isTimedOut) break;
@@ -466,16 +466,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
-            // Extract all text content from the document
             const allTextContent = extractAllTextFromDocument(doc);
             
-            // Create the title - use h1 if available, otherwise use the URL
             const title = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim() || `Content from ${url}`;
             
-            // Create the normalized URL
             const normalizedUrl = normalizeUrl(url, startUrl);
             
-            // Create the metadata with page type and URL info
             const metadata: Record<string, any> = {
               pageType: validType,
               sourceUrl: url,
@@ -483,15 +479,17 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               textLength: allTextContent.length
             };
             
-            // Create a new item with all the text content
+            const sanitizedContent = allTextContent.replace(/\u0000/g, '');
+            const sanitizedHtml = html.replace(/\u0000/g, '');
+            
             const newItem = {
               title,
-              content: allTextContent,
+              content: sanitizedContent,
               url: normalizedUrl,
               type: validType,
               scraped_at: new Date().toISOString(),
               metadata,
-              raw_html: html // Always save raw HTML
+              raw_html: sanitizedHtml
             };
             
             scrapedItems.push(newItem);
@@ -522,7 +520,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 
                 const nextUrl = normalizeUrl(href, url);
                 
-                // Accept any URL from althingi.is domain without filtering by content type
                 if (!nextUrl.includes("althingi.is")) continue;
                 
                 if (!visitedUrls.has(nextUrl)) {
@@ -549,7 +546,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
-    // If no items were found with the DOM parser, try direct HTML extraction
     if (scrapedItems.length === 0 && successfulResponses.size > 0) {
       console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
       
@@ -557,17 +553,20 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
         const textContent = extractAllTextFromHtml(data.html);
         
         if (textContent) {
+          const sanitizedContent = textContent.replace(/\u0000/g, '');
+          const sanitizedHtml = data.html.replace(/\u0000/g, '');
+          
           const newItem = {
             title: `Content from ${url}`,
-            content: textContent,
+            content: sanitizedContent,
             url: url,
             type: validType,
             scraped_at: new Date().toISOString(),
             metadata: {
               extractionMethod: "direct",
-              textLength: textContent.length
+              textLength: sanitizedContent.length
             },
-            raw_html: data.html
+            raw_html: sanitizedHtml
           };
           
           scrapedItems.push(newItem);
@@ -588,18 +587,24 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
     console.log(`Failed URLs: ${failedUrls.length}`);
     
+    const finalStatus = scrapedItems.length > 0 ? "completed" : failedUrls.length > 0 ? "completed" : "failed";
+    const errorMessage = scrapedItems.length === 0 && failedUrls.length > 0 ? 
+      `Failed to scrape any items, ${failedUrls.length} URLs failed` : null;
+    
     await supabase
       .from("scrape_jobs")
       .update({ 
-        status: "completed", 
+        status: finalStatus, 
         completed_at: new Date().toISOString(),
         items_scraped: itemsScraped,
+        error_message: errorMessage
       })
       .eq("id", jobId);
     
     return {
       items: scrapedItems,
-      failedUrls: failedUrls
+      failedUrls: failedUrls,
+      status: finalStatus
     };
   } catch (error) {
     console.error("Scraping error:", error);
@@ -611,7 +616,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     await supabase
       .from("scrape_jobs")
       .update({ 
-        status: "failed", 
+        status: itemsScraped > 0 ? "completed" : "failed",
         completed_at: new Date().toISOString(),
         error_message: error instanceof Error ? error.message : String(error),
         items_scraped: itemsScraped
