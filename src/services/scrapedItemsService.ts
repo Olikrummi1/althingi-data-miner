@@ -193,3 +193,24 @@ export async function refreshScrapedItems(): Promise<boolean> {
     return false;
   }
 }
+
+// New function to handle edge function errors more gracefully
+export async function handleEdgeFunctionError(error: any, type: string): Promise<void> {
+  let errorMessage = "Unknown error occurred";
+  
+  if (error?.message) {
+    errorMessage = error.message;
+  }
+  
+  if (errorMessage.includes("Edge Function returned a non-2xx status code")) {
+    // This is likely a resource limit issue, provide a more helpful message
+    toast.error(`The server is busy processing other requests. Please try again later or try with a smaller scrape depth.`);
+    console.error(`Edge Function error for ${type} scraper:`, errorMessage);
+  } else if (errorMessage.includes("WORKER_LIMIT")) {
+    toast.error(`Resource limit reached. Try again with a smaller scrape depth or wait for current jobs to complete.`);
+    console.error(`Worker limit reached for ${type} scraper:`, errorMessage);
+  } else {
+    toast.error(`Failed to start ${type} scraper: ${errorMessage}`);
+    console.error(`Error starting ${type} scraper:`, errorMessage);
+  }
+}

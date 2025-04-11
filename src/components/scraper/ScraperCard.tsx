@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, memo } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, StopCircle } from "lucide-react";
 import { stopScrapeJob } from "@/services/scrapeJobsService";
 import { toast } from "sonner";
+import { handleEdgeFunctionError } from "@/services/scrapedItemsService";
 
 type ScrapeConfigCardProps = {
   title: string;
@@ -59,7 +61,8 @@ const ScraperCard = memo(({
     title,
     onScrape,
     enabled,
-    defaultUrl
+    defaultUrl,
+    onError: (error) => handleEdgeFunctionError(error, title)
   });
 
   useEffect(() => {
@@ -177,11 +180,16 @@ const ScraperCard = memo(({
               type="number" 
               defaultValue="2" 
               min="1" 
-              max="5" 
+              max="3" 
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={depthRef}
             />
+            {title.toLowerCase() === "mps" && (
+              <p className="text-xs text-gray-500 mt-1">
+                For MPs, use a lower depth (1-2) to avoid resource limits
+              </p>
+            )}
           </div>
         </form>
       </CardContent>

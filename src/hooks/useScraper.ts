@@ -161,9 +161,18 @@ export default function useScraper() {
     try {
       toast.info(`Setting up ${id} scraper...`);
       
+      // For MPs scraper, use more conservative settings to avoid resource limits
+      let customConfig = { ...config };
+      if (id === "mps") {
+        if (customConfig.depth > 2) {
+          toast.warning("Reducing MPs scrape depth to 2 to avoid resource limits");
+          customConfig.depth = 2;
+        }
+      }
+      
       const job = await createScrapeJob(id as any, {
-        url: config.url,
-        depth: config.depth,
+        url: customConfig.url,
+        depth: customConfig.depth,
         ...settings
       });
       
@@ -183,10 +192,10 @@ export default function useScraper() {
         // Enhanced configuration to get more data
         const enhancedConfig = {
           ...settings,
-          url: config.url,
-          depth: config.depth,
+          url: customConfig.url,
+          depth: customConfig.depth,
           // Adding additional settings to maximize data collection
-          max_items: 100, // Increased from default
+          max_items: id === "mps" ? 50 : 100, // Lower for MPs to prevent resource exhaustion
           follow_links: true,
           save_raw_html: settings.save_raw_html
         };
@@ -202,7 +211,7 @@ export default function useScraper() {
         if (error) {
           console.error("Error invoking scraper function:", error);
           await updateScrapeJobStatus(job.id, "failed", 0, `Failed to send a request to the Edge Function: ${error.message}`);
-          throw new Error(`Failed to send a request to the Edge Function: ${error.message}`);
+          throw error;
         }
         
         setActiveJobs(prev => ({
@@ -218,7 +227,17 @@ export default function useScraper() {
       } catch (error: any) {
         console.error("Error invoking scraper function:", error);
         await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
-        toast.error(`Failed to start ${id} scraper: ${error.message || "Unknown error"}`);
+        
+        // Check if it's a resource limit error for MPs
+        if (id === "mps" && error.message && (
+            error.message.includes("non-2xx status code") || 
+            error.message.includes("WORKER_LIMIT") ||
+            error.message.includes("timeout")
+        )) {
+          toast.error(`The MPs scraper hit resource limits. Try with a smaller depth (1-2) or wait for other jobs to complete.`);
+        } else {
+          toast.error(`Failed to start ${id} scraper: ${error.message || "Unknown error"}`);
+        }
         
         setActiveJobs(prev => {
           const newJobs = { ...prev };
