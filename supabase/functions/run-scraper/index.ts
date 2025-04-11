@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -23,11 +22,10 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-// Improved constants to handle timeouts better
-const EDGE_FUNCTION_TIMEOUT_MS = 18000; // 18 seconds (conservative to allow for cleanup)
-const MAX_ITEMS_PER_TYPE = 20; // Reduced max items to prevent timeout
-const BATCH_SIZE = 3; // Smaller batch size for more frequent saves
-const SAVE_INTERVAL_MS = 3000; // Save every 3 seconds regardless of batch size
+const EDGE_FUNCTION_TIMEOUT_MS = 24000; // 24 seconds (conservative to allow for cleanup)
+const MAX_ITEMS_PER_TYPE = 100; // Increased max items per type
+const BATCH_SIZE = 10; // Increased batch size
+const SAVE_INTERVAL_MS = 5000; // Save every 5 seconds
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -378,10 +376,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = Math.min(config.depth || 2, 3); // Limit max depth to 3 to prevent timeout
-  const throttle = Math.max(config.throttle || 1500, 500); // Ensure minimum throttle of 500ms
+  const maxDepth = Math.min(config.depth || 3, 5); // Increased max depth to 5
+  const throttle = Math.max(config.throttle || 1000, 300); // Reduced minimum throttle to 300ms
   const saveRawHtml = config.save_raw_html || false;
-  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 10000); // Limit request timeout to 10 seconds
+  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000); // Increased maximum timeout to 15 seconds
   
   let itemsScraped = 0;
   let urlsToVisit: string[] = [];
@@ -415,7 +413,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     console.log("Updated job status to running");
   }
   
-  // Create a function to periodically save items regardless of batch size
   let lastSaveTime = Date.now();
   let pendingItems: any[] = [];
   
@@ -425,7 +422,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     const currentTime = Date.now();
     pendingItems.push(...items);
     
-    // Only save if we have enough items or enough time has passed or forced update
     if (pendingItems.length >= BATCH_SIZE || 
         currentTime - lastSaveTime > SAVE_INTERVAL_MS || 
         forceUpdate) {
@@ -454,9 +450,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     return true; // No save attempted yet
   }
   
-  // Setup a timeout to ensure we save data before the edge function times out
+  let isTimedOut = false;
+  
   const timeoutId = setTimeout(async () => {
     console.log("Approaching function timeout, saving remaining data and completing job...");
+    isTimedOut = true;
     
     if (pendingItems.length > 0) {
       await saveBatchToDb([], true); // Force save any pending items
@@ -468,7 +466,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
         status: "completed", 
         completed_at: new Date().toISOString(),
         items_scraped: itemsScraped,
-        error_message: "Function timed out but data was saved"
+        error_message: "Function timed out but data was saved successfully"
       })
       .eq("id", jobId);
       
@@ -479,7 +477,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   const scrapedItemsBatch: any[] = [];
   
   try {
-    // Setup periodic job status updates
     const statusUpdateInterval = setInterval(async () => {
       if (itemsScraped > 0) {
         await supabase
@@ -488,24 +485,24 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           .eq("id", jobId);
         console.log(`Updated job status: ${itemsScraped} items scraped`);
       }
-    }, 5000);
+    }, 3000);
     
     for (const startUrl of urlsToVisit) {
-      if (visitedUrls.has(startUrl)) continue;
+      if (visitedUrls.has(startUrl) || isTimedOut) continue;
       
       let currentDepthUrls = [startUrl];
       console.log(`Starting with URL: ${startUrl}`);
       
-      for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0; depth++) {
+      for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0 && !isTimedOut; depth++) {
         console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
         
         const nextDepthUrls: string[] = [];
         
-        // Only process a limited number of URLs per depth to prevent timeout
-        const urlsToProcess = currentDepthUrls.slice(0, 3);
+        const urlsToProcess = currentDepthUrls.slice(0, 10); // Increased from 3 to 10
         
         for (const url of urlsToProcess) {
-          // Check if we're approaching the timeout
+          if (isTimedOut) break;
+          
           if (Date.now() - lastSaveTime > SAVE_INTERVAL_MS) {
             await saveBatchToDb([], true); // Force save
           }
@@ -699,7 +696,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
             }
             
-            if (title && !mpProfile) {
+            if (title) {
               const normalizedUrl = normalizeUrl(url, startUrl);
               
               const newItem = {
@@ -728,13 +725,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 .eq("id", jobId);
             }
             
-            if (depth < maxDepth - 1) {
+            if (depth < maxDepth - 1 && !isTimedOut) {
               const links = doc.querySelectorAll("a");
-              // Limit the number of links we follow to prevent timeout
-              const linkLimit = 3;
+              const linkLimit = 20; // Increased from 3 to 20
               let linkCount = 0;
               
-              for (let i = 0; i < links.length && linkCount < linkLimit; i++) {
+              for (let i = 0; i < links.length && linkCount < linkLimit && !isTimedOut; i++) {
                 const link = links[i];
                 const href = link.getAttribute("href");
                 
@@ -757,16 +753,14 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           }
         }
         
-        currentDepthUrls = nextDepthUrls.slice(0, 5); // Limit number of URLs for next depth
+        currentDepthUrls = nextDepthUrls.slice(0, 20); // Increased from 5 to 20
       }
     }
     
-    // Final save of any remaining items
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
     
-    // Clear the timeout since we completed successfully
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
@@ -815,18 +809,15 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   } catch (error) {
     console.error("Scraping error:", error);
     
-    // Make sure to save any pending items before exiting due to error
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
     
-    // Update job status with error
     await supabase
       .from("scrape_jobs")
       .update({ 
         status: "failed", 
         completed_at: new Date().toISOString(),
-        items_scraped: itemsScraped,
         error_message: error instanceof Error ? error.message : String(error)
       })
       .eq("id", jobId);

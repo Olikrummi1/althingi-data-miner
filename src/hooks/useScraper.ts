@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -138,7 +139,8 @@ export default function useScraper() {
     
     loadActiveJobs();
     
-    const intervalId = setInterval(loadActiveJobs, 3000);
+    // Increased polling frequency to get more up-to-date information
+    const intervalId = setInterval(loadActiveJobs, 2000); // Changed from 3000 to 2000
     
     return () => clearInterval(intervalId);
   }, [activeJobs, totalItemsScraped, isLoadingJobs]);
@@ -178,15 +180,22 @@ export default function useScraper() {
           } as ActiveJob
         }));
         
+        // Enhanced configuration to get more data
+        const enhancedConfig = {
+          ...settings,
+          url: config.url,
+          depth: config.depth,
+          // Adding additional settings to maximize data collection
+          max_items: 100, // Increased from default
+          follow_links: true,
+          save_raw_html: settings.save_raw_html
+        };
+        
         const { data, error } = await supabase.functions.invoke("run-scraper", {
           body: { 
             type: id, 
             jobId: job.id,
-            config: {
-              ...settings,
-              url: config.url,
-              depth: config.depth
-            }
+            config: enhancedConfig
           }
         });
         
@@ -246,13 +255,17 @@ export default function useScraper() {
     
     for (const id of enabledScraperIds) {
       try {
+        // Get appropriate URL for this scraper type
+        const baseUrl = getBaseUrlForScraper(id);
+        
         await handleScrape(id, { 
-          url: `https://althingi.is/${id}`, 
-          depth: settings?.max_depth || 2 
+          url: baseUrl, 
+          depth: settings?.max_depth || 3 // Increased from 2 to 3
         });
         successCount++;
         
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Adding delay between scrapers to prevent overloading
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
         errorCount++;
@@ -267,6 +280,26 @@ export default function useScraper() {
       toast.error("All scraping tasks failed to start");
     } else {
       toast.warning(`${successCount} scraping tasks started, ${errorCount} failed`);
+    }
+  };
+  
+  // Helper function to get the most appropriate URL for each scraper type
+  const getBaseUrlForScraper = (id: string): string => {
+    switch(id) {
+      case "bills":
+        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
+      case "votes":
+        return "https://www.althingi.is/thingstorf/atkvaedagreidslur/";
+      case "speeches":
+        return "https://www.althingi.is/altext/raedur/";
+      case "mps":
+        return "https://www.althingi.is/thingmenn/althingismenn/";
+      case "committees":
+        return "https://www.althingi.is/thingnefndir/fastanefndir/";
+      case "issues":
+        return "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/";
+      default:
+        return `https://www.althingi.is/${id}`;
     }
   };
   

@@ -40,6 +40,36 @@ export async function getRecentItems(limit = 10): Promise<ScrapedItem[]> {
   }
 }
 
+export async function getItemsByType(type: string, limit = 100): Promise<ScrapedItem[]> {
+  try {
+    console.log(`Fetching up to ${limit} items of type ${type}`);
+    const { data, error } = await supabase
+      .from("scraped_items")
+      .select("*")
+      .eq("type", type)
+      .order("scraped_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error(`Error fetching items of type ${type}:`, error);
+      toast.error(`Failed to load ${type} items`);
+      return [];
+    }
+
+    if (!data || data.length === 0) {
+      console.log(`No items of type ${type} found in the database`);
+      return [];
+    }
+
+    console.log(`Found ${data.length} items of type ${type}`);
+    return data as ScrapedItem[];
+  } catch (error) {
+    console.error(`Error in getItemsByType for ${type}:`, error);
+    toast.error(`Failed to load ${type} items`);
+    return [];
+  }
+}
+
 export async function getItemCountsByType(): Promise<{ name: string; count: number }[]> {
   try {
     console.log("Fetching item counts by type");
