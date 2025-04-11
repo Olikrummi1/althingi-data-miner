@@ -54,6 +54,7 @@ export const scraperConfigs: ScraperConfig[] = [
 ];
 
 export default function useScraper() {
+  
   const [enabledScrapers, setEnabledScrapers] = useState<Record<string, boolean>>({
     bills: true,
     votes: true,
@@ -69,8 +70,10 @@ export default function useScraper() {
   const [activeJobs, setActiveJobs] = useState<Record<string, ActiveJob>>({});
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
   const [totalItemsScraped, setTotalItemsScraped] = useState(0);
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
 
   useEffect(() => {
+    
     const loadSettings = async () => {
       setIsSettingsLoading(true);
       try {
@@ -90,6 +93,7 @@ export default function useScraper() {
   }, []);
 
   useEffect(() => {
+    
     const loadActiveJobs = async () => {
       try {
         if (isLoadingJobs) {
@@ -157,14 +161,29 @@ export default function useScraper() {
       return;
     }
     
+    
+    const activeJobsCount = Object.values(activeJobs).filter(job => 
+      job.status === "running" || job.status === "pending"
+    ).length;
+    
+    if (activeJobsCount >= 2) {
+      toast.error("Too many active scrape jobs. Please wait for the current jobs to complete before starting another.");
+      return;
+    }
+    
     try {
       toast.info(`Setting up ${id} scraper...`);
+      
       
       let customConfig = { ...config };
       if (id === "mps") {
         if (customConfig.depth > 2) {
           toast.warning("Reducing MPs scrape depth to 2 to avoid resource limits");
           customConfig.depth = 2;
+        }
+        if (!customConfig.maxItems || customConfig.maxItems > 100) {
+          customConfig.maxItems = 100;
+          toast.info("Limiting MPs to 100 items to avoid timeouts");
         }
       }
       
@@ -187,47 +206,109 @@ export default function useScraper() {
           } as ActiveJob
         }));
         
+        
         const enhancedConfig = {
           ...settings,
           url: customConfig.url,
           depth: customConfig.depth,
-          max_items: customConfig.maxItems || (id === "mps" ? 100 : 200),
+          max_items: customConfig.maxItems || (id === "mps" ? 50 : 100),
           follow_links: true,
-          save_raw_html: settings.save_raw_html,
-          throttle: Math.max(settings.throttle * 0.7, 300),
-          explore_breadth: id === "mps" ? 10 : 20,
-          timeout_seconds: Math.min(settings.timeout_seconds * 1.5, 60)
+          save_raw_html: false, 
+          throttle: Math.max(settings.throttle, 500), 
+          explore_breadth: id === "mps" ? 5 : 10, 
+          timeout_seconds: Math.min(settings.timeout_seconds, 30) 
         };
         
-        const { data, error } = await supabase.functions.invoke("run-scraper", {
-          body: { 
-            type: id, 
-            jobId: job.id,
-            config: enhancedConfig
-          }
-        });
         
-        if (error) {
-          console.error("Error invoking scraper function:", error);
-          await updateScrapeJobStatus(job.id, "failed", 0, `Failed to send a request to the Edge Function: ${error.message}`);
-          throw error;
+        let retryCount = 0;
+        const maxRetries = 2;
+        let success = false;
+        let lastError;
+        
+        while (retryCount <= maxRetries && !success) {
+          try {
+            if (retryCount > 0) {
+              
+              await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+              toast.info(`Retry attempt ${retryCount} for ${id} scraper...`);
+            }
+            
+            const { data, error } = await supabase.functions.invoke("run-scraper", {
+              body: { 
+                type: id, 
+                jobId: job.id,
+                config: enhancedConfig
+              }
+            });
+            
+            if (error) {
+              console.error(`Error invoking scraper function (attempt ${retryCount + 1}):`, error);
+              lastError = error;
+              retryCount++;
+              continue;
+            }
+            
+            success = true;
+            setActiveJobs(prev => ({
+              ...prev,
+              [id]: { 
+                ...job,
+                status: "running"
+              } as ActiveJob
+            }));
+            
+            toast.success(`Started scraping ${id}`);
+            setConsecutiveErrors(0); 
+            return data;
+          } catch (error: any) {
+            console.error(`Error invoking scraper function (attempt ${retryCount + 1}):`, error);
+            lastError = error;
+            retryCount++;
+          }
         }
         
-        setActiveJobs(prev => ({
-          ...prev,
-          [id]: { 
-            ...job,
-            status: "running"
-          } as ActiveJob
-        }));
         
-        toast.success(`Started scraping ${id}`);
-        return data;
+        await updateScrapeJobStatus(job.id, "failed", 0, lastError?.message || "Max retries exceeded");
+        
+        if (lastError) {
+          await handleEdgeFunctionError(lastError, id);
+        } else {
+          toast.error(`Failed to start ${id} scraper after ${maxRetries} attempts`);
+        }
+        
+        
+        setConsecutiveErrors(prev => prev + 1);
+        
+        
+        setActiveJobs(prev => {
+          const newJobs = { ...prev };
+          delete newJobs[id];
+          return newJobs;
+        });
+        
+        throw lastError || new Error("Max retries exceeded");
       } catch (error: any) {
-        console.error("Error invoking scraper function:", error);
-        await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
+        console.error(`Error scraping ${id}:`, error);
         
-        await handleEdgeFunctionError(error, id);
+        
+        if (error.message?.includes("timeout") || error.message?.includes("busy")) {
+          toast.error(`Server busy or timed out. Try again with smaller depth and max items.`);
+        } else if (error.message?.includes("resource") || error.message?.includes("memory")) {
+          toast.error(`Resource limit reached. Try again with smaller depth and max items.`);
+        } else {
+          await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
+        }
+        
+        
+        if (consecutiveErrors >= 2) {
+          toast.error("Multiple scrape attempts failed. Try these troubleshooting steps:", {
+            duration: 8000,
+          });
+          
+          toast.info("1. Reduce scrape depth to 1", { duration: 7000 });
+          toast.info("2. Lower max items to 50", { duration: 7000 });
+          toast.info("3. Wait a few minutes before trying again", { duration: 7000 });
+        }
         
         setActiveJobs(prev => {
           const newJobs = { ...prev };
@@ -245,6 +326,8 @@ export default function useScraper() {
   };
 
   const runAllEnabled = async () => {
+    
+    
     const enabledScraperIds = Object.entries(enabledScrapers)
       .filter(([_, enabled]) => enabled)
       .map(([id]) => id);
@@ -256,26 +339,51 @@ export default function useScraper() {
       return;
     }
     
+    
+    if (enabledCount > 2) {
+      toast.warning("Running multiple scrapers simultaneously may cause timeouts. Consider running fewer at once.");
+    }
+    
     setIsRunningAll(true);
-    toast.success(`Started scraping ${enabledCount} data categories`);
+    toast.success(`Starting to scrape ${enabledCount} data categories`);
     
     let successCount = 0;
     let errorCount = 0;
     
-    for (const id of enabledScraperIds) {
+    
+    const prioritizedScrapers = [...enabledScraperIds].sort((a, b) => {
+      
+      if (a === "mps") return 1;
+      if (b === "mps") return -1;
+      return 0;
+    });
+    
+    for (const id of prioritizedScrapers) {
       try {
         const baseUrl = getBaseUrlForScraper(id);
         
+        
+        const maxDepth = id === "mps" ? 1 : 2;
+        const maxItems = id === "mps" ? 50 : 100;
+        
         await handleScrape(id, { 
           url: baseUrl, 
-          depth: settings?.max_depth || 3
+          depth: maxDepth,
+          maxItems: maxItems
         });
         successCount++;
         
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        await new Promise(resolve => setTimeout(resolve, 3000));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
         errorCount++;
+        
+        
+        if (errorCount >= 2) {
+          toast.error("Multiple errors occurred. Stopping batch scrape to prevent overloading.");
+          break;
+        }
       }
     }
     

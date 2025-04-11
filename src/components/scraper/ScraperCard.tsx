@@ -57,6 +57,15 @@ const ScraperCard = memo(({
   };
   
   const defaultUrl = getDefaultUrl();
+  const isMpsScraper = title.toLowerCase() === "mps";
+
+  // Default depth based on scraper type
+  const defaultDepth = isMpsScraper ? "1" : "2";
+  // Default max items based on scraper type
+  const defaultMaxItems = isMpsScraper ? "50" : "100";
+  // Max depth constraint based on scraper type
+  const maxDepthAllowed = isMpsScraper ? 2 : 3;
+  
   const { isLoading, urlRef, depthRef, maxItemsRef, handleSubmit } = useScrapeForm({
     title,
     onScrape,
@@ -114,7 +123,7 @@ const ScraperCard = memo(({
     if (isActiveJob && scrapeJobId && !isPolling) {
       setIsPolling(true);
       pollJobStatus(scrapeJobId);
-      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 1500); // Increased polling frequency
+      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 2000);
     } else if (!isActiveJob && isPolling) {
       setIsPolling(false);
     }
@@ -178,34 +187,36 @@ const ScraperCard = memo(({
             <Input 
               id={`depth-${title}`} 
               type="number" 
-              defaultValue="2" 
+              defaultValue={defaultDepth} 
               min="1" 
-              max="4" 
+              max={maxDepthAllowed.toString()} 
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={depthRef}
             />
-            {title.toLowerCase() === "mps" && (
-              <p className="text-xs text-gray-500 mt-1">
-                For MPs, use a lower depth (1-2) to avoid resource limits
+            {isMpsScraper && (
+              <p className="text-xs text-red-500 mt-1">
+                MPs scraper is resource-intensive. Keep depth at 1 for better performance.
               </p>
             )}
           </div>
           
           <div className="grid w-full items-center gap-1.5">
-            <Label htmlFor={`maxitems-${title}`}>Max Items (optional)</Label>
+            <Label htmlFor={`maxitems-${title}`}>Max Items</Label>
             <Input 
               id={`maxitems-${title}`} 
               type="number" 
-              defaultValue={title.toLowerCase() === "mps" ? "100" : "200"} 
+              defaultValue={defaultMaxItems} 
               min="10" 
-              max={title.toLowerCase() === "mps" ? "200" : "500"} 
+              max={isMpsScraper ? "100" : "200"} 
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={maxItemsRef}
             />
             <p className="text-xs text-gray-500 mt-1">
-              Leave at default or increase to get more data (may increase time)
+              {isMpsScraper 
+                ? "For MPs, keep this below 100 to avoid timeout errors" 
+                : "Lower values reduce resource usage and prevent timeouts"}
             </p>
           </div>
         </form>

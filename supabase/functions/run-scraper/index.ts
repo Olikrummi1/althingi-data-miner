@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -23,10 +22,10 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-const EDGE_FUNCTION_TIMEOUT_MS = 25000; // 25 seconds (conservative to allow for cleanup)
-const MAX_ITEMS_PER_TYPE = 500; // Increased max items per type
-const BATCH_SIZE = 20; // Increased batch size
-const SAVE_INTERVAL_MS = 4000; // Save more frequently
+const EDGE_FUNCTION_TIMEOUT_MS = 20000; // 20 seconds (reduced from 25s)
+const MAX_ITEMS_PER_TYPE = 200; // Reduced from 500
+const BATCH_SIZE = 10; // Reduced batch size to save more frequently
+const SAVE_INTERVAL_MS = 3000; // Save more frequently
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -45,9 +44,6 @@ function getMpUrls(): string[] {
     "https://www.althingi.is/thingmenn/althingismenn/",
     "https://www.althingi.is/altext/cv/is/",  // Alternative URL for MP info
     "https://www.althingi.is/thingmenn/",     // Main MPs section
-    "https://www.althingi.is/thingmenn/thingmenn/",  // Another potential URL
-    "https://www.althingi.is/thingmenn/thingmenn-eftir-thingflokkum/", // By party
-    "https://www.althingi.is/thingmenn/thingmenn/thingrodun/", // By constituency
   ];
 }
 
@@ -57,13 +53,11 @@ function getAdditionalStartUrls(scraperType: string): string[] {
       return [
         "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/",
         "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill-mala/",
-        "https://www.althingi.is/lagasafn/", // Laws repository
       ];
     case "votes":
       return [
         "https://www.althingi.is/thingstorf/atkvaedagreidslur/",
         "https://www.althingi.is/thingstorf/atkvaedagreidslur/atkvaedagreidslur-a-151-loggjafarthingi/",
-        "https://www.althingi.is/thingstorf/atkvaedagreidslur/atkvaedagreidslur-a-152-loggjafarthingi/",
       ];
     case "speeches":
       return [
@@ -74,7 +68,6 @@ function getAdditionalStartUrls(scraperType: string): string[] {
       return [
         "https://www.althingi.is/thingnefndir/fastanefndir/", 
         "https://www.althingi.is/thingnefndir/nefndarfundir/",
-        "https://www.althingi.is/thingnefndir/",
       ];
     case "issues":
       return [
@@ -155,7 +148,6 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
-// Functions for extracting different types of data
 function extractMpDataFromHtml(html: string): any[] {
   console.log("Manually extracting MP data from HTML...");
   
@@ -415,24 +407,77 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = Math.min(config.depth || 3, 6); // Increased max depth to 6
-  const throttle = Math.max(config.throttle || 1000, 200); // Reduced minimum throttle to 200ms
+  const maxDepth = Math.min(config.depth || 2, 3); // Reduced max depth
+  const throttle = Math.max(config.throttle || 1000, 300); // Increased minimum throttle
   const saveRawHtml = config.save_raw_html || false;
-  const timeout = Math.min((config.timeout_seconds || 20) * 1000, 20000); // Increased maximum timeout
-  const exploreBreadth = config.explore_breadth || 15; // How many links to follow at each depth
-  const maxItems = config.max_items || MAX_ITEMS_PER_TYPE;
+  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000); // Reduced maximum timeout
+  const exploreBreadth = Math.min(config.explore_breadth || 10, 10); // Reduced breadth to explore
+  const maxItems = Math.min(config.max_items || 100, MAX_ITEMS_PER_TYPE); // Lower default and cap
   
+  const { data: runningJobs } = await supabase
+    .from("scrape_jobs")
+    .select("id")
+    .in("status", ["running", "pending"])
+    .neq("id", jobId);
+  
+  if (runningJobs && runningJobs.length > 2) {
+    await supabase
+      .from("scrape_jobs")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_message: "The server is busy processing other requests. Please try again later or try with a smaller scrape depth."
+      })
+      .eq("id", jobId);
+    
+    return new Response(
+      JSON.stringify({ 
+        error: "Too many concurrent scrape jobs. Please try again later." 
+      }),
+      { 
+        status: 429, 
+        headers: { 
+          "Content-Type": "application/json",
+          ...corsHeaders
+        } 
+      }
+    );
+  }
+  
+  if (scraperType === "mps" && maxDepth > 2) {
+    await supabase
+      .from("scrape_jobs")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_message: "MP scraper is limited to depth 2 to avoid resource constraints."
+      })
+      .eq("id", jobId);
+    
+    return new Response(
+      JSON.stringify({ 
+        error: "MP scraper is limited to depth 2. Please reduce the scrape depth." 
+      }),
+      { 
+        status: 400, 
+        headers: { 
+          "Content-Type": "application/json",
+          ...corsHeaders
+        } 
+      }
+    );
+  }
+
   let itemsScraped = 0;
   let urlsToVisit: string[] = [];
   
   if (scraperType === "mps") {
-    urlsToVisit = getMpUrls();
+    urlsToVisit = getMpUrls().slice(0, 2); // Limit initial MP URLs
   } else {
     const baseUrl = config.url || getBaseUrl(scraperType);
-    urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType)];
+    urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType).slice(0, 2)];
   }
   
-  // Remove duplicate URLs
   urlsToVisit = [...new Set(urlsToVisit)];
   
   const visitedUrls = new Set<string>();
@@ -507,10 +552,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     await supabase
       .from("scrape_jobs")
       .update({ 
-        status: "completed", 
+        status: itemsScraped > 0 ? "completed" : "failed", 
         completed_at: new Date().toISOString(),
         items_scraped: itemsScraped,
-        error_message: "Function timed out but data was saved successfully"
+        error_message: itemsScraped > 0 ? 
+          "Function timed out but some data was saved successfully" : 
+          "Function timed out before scraping any data"
       })
       .eq("id", jobId);
       
@@ -537,13 +584,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       let currentDepthUrls = [startUrl];
       console.log(`Starting with URL: ${startUrl}`);
       
-      // Process each level of depth
       for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0 && !isTimedOut; depth++) {
         console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
         
         const nextDepthUrls: string[] = [];
         
-        // Take more URLs at each depth for better coverage
         const urlsToProcess = currentDepthUrls.slice(0, Math.min(20, currentDepthUrls.length)); 
         
         for (const url of urlsToProcess) {
@@ -625,7 +670,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
-            // Special handling for MP pages
             if (validType === "mp" && 
                 (url.includes("/thingmenn/althingismenn/") || 
                 url.includes("/thingmenn/") || 
@@ -668,7 +712,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               }
             }
             
-            // Process MP profile pages
             const mpProfile = mpProfiles.find(p => p.url === url);
             if (validType === "mp" && mpProfile) {
               console.log(`Processing MP profile page for URL: ${url}`);
@@ -700,7 +743,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
-            // Extract content for the current page based on type
             let title = "";
             let content = "";
             let metadata: Record<string, any> = {};
@@ -710,7 +752,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 const billTitle = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
                 const billContent = doc.querySelector(".content, .text, article, main p")?.textContent?.trim();
                 
-                // Extract bill metadata
                 const billNumberEl = doc.querySelector(".number, .bill-number, [class*='number']");
                 const billNumber = billNumberEl ? billNumberEl.textContent?.trim() : "";
                 
@@ -733,7 +774,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 const voteTitle = doc.querySelector("h1, .heading, .title, header h2")?.textContent?.trim();
                 const voteResults = doc.querySelector(".results, .votes, table, .vote-results")?.textContent?.trim();
                 
-                // Extract voting metadata
                 const voteDate = doc.querySelector(".date, time, [class*='date']")?.textContent?.trim();
                 const voteCount = doc.querySelector(".count, .vote-count, [class*='count']")?.textContent?.trim();
                 
@@ -749,7 +789,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 const speechTitle = doc.querySelector("h1, .title, .header, [class*='title']")?.textContent?.trim();
                 const speechText = doc.querySelector(".speech-content, .text, article, main p")?.textContent?.trim();
                 
-                // Extract speech metadata
                 const speakerEl = doc.querySelector(".speaker, .author, [class*='speaker']");
                 const speaker = speakerEl ? speakerEl.textContent?.trim() : "";
                 
@@ -768,7 +807,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 const committeeName = doc.querySelector("h1, .name, .title, header h2")?.textContent?.trim();
                 const committeeDesc = doc.querySelector(".description, .info, .about, article p")?.textContent?.trim();
                 
-                // Extract committee metadata
                 const chairEl = doc.querySelector(".chair, .chairman, .chairperson, [class*='chair']");
                 const chair = chairEl ? chairEl.textContent?.trim() : "";
                 
@@ -787,7 +825,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 const issueName = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
                 const issueDesc = doc.querySelector(".description, .text, .content, article p")?.textContent?.trim();
                 
-                // Extract issue metadata
                 const categoryEl = doc.querySelector(".category, .issue-category, [class*='category']");
                 const category = categoryEl ? categoryEl.textContent?.trim() : "";
                 
@@ -837,7 +874,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 .eq("id", jobId);
             }
             
-            // Find more links to follow for the next depth
             if (depth < maxDepth - 1 && !isTimedOut) {
               const links = doc.querySelectorAll("a");
               let linkCount = 0;
@@ -850,10 +886,8 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 
                 const nextUrl = normalizeUrl(href, url);
                 
-                // Only follow links on the same site
                 if (!nextUrl.includes("althingi.is")) continue;
                 
-                // Prioritize relevant links based on the type we're scraping
                 let shouldInclude = true;
                 
                 if (validType === "bill" && !nextUrl.includes("thingmal") && !nextUrl.includes("lagasafn")) {
@@ -881,12 +915,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           }
         }
         
-        // Limit the number of URLs for the next depth to avoid explosions
         currentDepthUrls = nextDepthUrls.slice(0, Math.min(30, nextDepthUrls.length));
       }
     }
     
-    // Save any remaining items
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
@@ -894,7 +926,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
-    // Attempt direct HTML extraction if no items were found with DOM parser
     if (scrapedItems.length === 0 && successfulResponses.size > 0) {
       console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
       
@@ -932,6 +963,15 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     
     console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
     console.log(`Failed URLs: ${failedUrls.length}`);
+    
+    await supabase
+      .from("scrape_jobs")
+      .update({ 
+        status: "completed", 
+        completed_at: new Date().toISOString(),
+        items_scraped: itemsScraped,
+      })
+      .eq("id", jobId);
     
     return {
       items: scrapedItems,
@@ -1044,16 +1084,116 @@ serve(async (req) => {
       );
     }
     
-    console.log(`Starting scrape job ${jobId} for type ${type}`);
+    const { data: activeJobs } = await supabase
+      .from("scrape_jobs")
+      .select("id")
+      .in("status", ["running", "pending"])
+      .neq("id", jobId);
     
-    try {
-      const scrapeResult = await scrapeData(type, config || {}, jobId);
+    if (activeJobs && activeJobs.length >= 2) {
+      await supabase
+        .from("scrape_jobs")
+        .update({ 
+          status: "failed", 
+          completed_at: new Date().toISOString(),
+          error_message: "The server is busy processing other requests. Please try again later or try with a smaller scrape depth."
+        })
+        .eq("id", jobId);
       
-      const scrapedItems = scrapeResult.items || [];
-      const failedUrls = scrapeResult.failedUrls || [];
-      const wasStopped = scrapeResult.stopped;
+      return new Response(
+        JSON.stringify({ 
+          error: "The server is busy processing other requests. Please try again later or try with a smaller scrape depth." 
+        }),
+        { 
+          status: 429, 
+          headers: { 
+            "Content-Type": "application/json",
+            ...corsHeaders
+          } 
+        }
+      );
+    }
+    
+    if (type === "mps") {
+      const safeConfig = { ...config };
       
-      if (!wasStopped) {
+      if (safeConfig.depth > 2) {
+        safeConfig.depth = 2;
+        console.log("Limiting MPs scraper depth to 2");
+      }
+      
+      if (!safeConfig.max_items || safeConfig.max_items > 100) {
+        safeConfig.max_items = 100;
+        console.log("Limiting MPs scraper to 100 items maximum");
+      }
+      
+      safeConfig.throttle = Math.max(safeConfig.throttle || 1000, 500);
+      
+      try {
+        const scrapeResult = await scrapeData(type, safeConfig, jobId);
+        
+        if (scrapeResult) {
+          const scrapedItems = scrapeResult.items || [];
+          const failedUrls = scrapeResult.failedUrls || [];
+          
+          return new Response(
+            JSON.stringify({ 
+              success: true, 
+              items: scrapedItems.length,
+              failedUrls: failedUrls.length
+            }),
+            { 
+              status: 200, 
+              headers: { 
+                "Content-Type": "application/json",
+                ...corsHeaders
+              } 
+            }
+          );
+        } else {
+          return new Response(
+            JSON.stringify({ error: "Scrape operation failed" }),
+            { 
+              status: 500, 
+              headers: { 
+                "Content-Type": "application/json",
+                ...corsHeaders
+              } 
+            }
+          );
+        }
+      } catch (error) {
+        console.error("Scraping error:", error);
+        
+        await supabase
+          .from("scrape_jobs")
+          .update({ 
+            status: "failed", 
+            completed_at: new Date().toISOString(),
+            error_message: error instanceof Error ? error.message : String(error)
+          })
+          .eq("id", jobId);
+        
+        return new Response(
+          JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+          { 
+            status: 500, 
+            headers: { 
+              "Content-Type": "application/json",
+              ...corsHeaders
+            } 
+          }
+        );
+      }
+    } else {
+      console.log(`Starting scrape job ${jobId} for type ${type}`);
+      
+      try {
+        const scrapeResult = await scrapeData(type, config || {}, jobId);
+        
+        const scrapedItems = scrapeResult.items || [];
+        const failedUrls = scrapeResult.failedUrls || [];
+        
         await supabase
           .from("scrape_jobs")
           .update({ 
@@ -1064,45 +1204,44 @@ serve(async (req) => {
               `Scraped ${scrapedItems.length} items with ${failedUrls.length} failures` : null
           })
           .eq("id", jobId);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            items: scrapedItems.length,
+            failedUrls: failedUrls.length
+          }),
+          { 
+            status: 200, 
+            headers: { 
+              "Content-Type": "application/json",
+              ...corsHeaders
+            } 
+          }
+        );
+      } catch (error) {
+        console.error("Scraping error:", error);
+        
+        await supabase
+          .from("scrape_jobs")
+          .update({ 
+            status: "failed", 
+            completed_at: new Date().toISOString(),
+            error_message: error instanceof Error ? error.message : String(error)
+          })
+          .eq("id", jobId);
+        
+        return new Response(
+          JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+          { 
+            status: 500, 
+            headers: { 
+              "Content-Type": "application/json",
+              ...corsHeaders
+            } 
+          }
+        );
       }
-      
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          items: scrapedItems.length,
-          failedUrls: failedUrls.length,
-          stopped: wasStopped
-        }),
-        { 
-          status: 200, 
-          headers: { 
-            "Content-Type": "application/json",
-            ...corsHeaders
-          } 
-        }
-      );
-    } catch (error) {
-      console.error("Scraping error:", error);
-      
-      await supabase
-        .from("scrape_jobs")
-        .update({ 
-          status: "failed", 
-          completed_at: new Date().toISOString(),
-          error_message: error instanceof Error ? error.message : String(error)
-        })
-        .eq("id", jobId);
-      
-      return new Response(
-        JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-        { 
-          status: 500, 
-          headers: { 
-            "Content-Type": "application/json",
-            ...corsHeaders
-          } 
-        }
-      );
     }
   } catch (error) {
     console.error("Server error:", error);
