@@ -209,8 +209,45 @@ export async function handleEdgeFunctionError(error: any, type: string): Promise
   } else if (errorMessage.includes("WORKER_LIMIT")) {
     toast.error(`Resource limit reached. Try again with a smaller scrape depth or wait for current jobs to complete.`);
     console.error(`Worker limit reached for ${type} scraper:`, errorMessage);
+  } else if (errorMessage.includes("timeout")) {
+    toast.error(`The scraper timed out. Try with a smaller scrape depth or more focused URL.`);
+    console.error(`Timeout for ${type} scraper:`, errorMessage);
+  } else if (errorMessage.includes("memory")) {
+    toast.error(`The scraper ran out of memory. Try with a smaller scrape depth.`);
+    console.error(`Memory limit for ${type} scraper:`, errorMessage);
   } else {
     toast.error(`Failed to start ${type} scraper: ${errorMessage}`);
     console.error(`Error starting ${type} scraper:`, errorMessage);
+  }
+}
+
+// New function to get additional items beyond the initial limit
+export async function getMoreItemsByType(type: string, offset = 0, limit = 50): Promise<ScrapedItem[]> {
+  try {
+    console.log(`Fetching additional items of type ${type} (offset: ${offset}, limit: ${limit})`);
+    const { data, error } = await supabase
+      .from("scraped_items")
+      .select("*")
+      .eq("type", type)
+      .order("scraped_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error(`Error fetching additional items of type ${type}:`, error);
+      toast.error(`Failed to load more ${type} items`);
+      return [];
+    }
+
+    if (!data || data.length === 0) {
+      console.log(`No additional items of type ${type} found in the database`);
+      return [];
+    }
+
+    console.log(`Found ${data.length} additional items of type ${type}`);
+    return data as ScrapedItem[];
+  } catch (error) {
+    console.error(`Error in getMoreItemsByType for ${type}:`, error);
+    toast.error(`Failed to load more ${type} items`);
+    return [];
   }
 }

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 type ScrapeFormProps = {
   title: string;
-  onScrape: (config: { url: string; depth: number }) => Promise<void>;
+  onScrape: (config: { url: string; depth: number; maxItems?: number }) => Promise<void>;
   enabled: boolean;
   defaultUrl: string;
   onError?: (error: any) => void;
@@ -14,6 +14,7 @@ export function useScrapeForm({ title, onScrape, enabled, defaultUrl, onError }:
   const [isLoading, setIsLoading] = useState(false);
   const urlRef = useRef<HTMLInputElement>(null);
   const depthRef = useRef<HTMLInputElement>(null);
+  const maxItemsRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +31,7 @@ export function useScrapeForm({ title, onScrape, enabled, defaultUrl, onError }:
     
     const url = urlRef.current.value.trim();
     const depthValue = depthRef.current.value.trim();
+    const maxItemsValue = maxItemsRef.current?.value.trim();
     
     if (!url) {
       toast.error("URL is required");
@@ -48,6 +50,13 @@ export function useScrapeForm({ title, onScrape, enabled, defaultUrl, onError }:
       return;
     }
     
+    const maxItems = maxItemsValue ? parseInt(maxItemsValue) : undefined;
+    
+    if (maxItemsValue && (isNaN(maxItems) || maxItems < 10)) {
+      toast.error("Max items must be a number of at least 10 (or leave blank for default)");
+      return;
+    }
+    
     try {
       setIsLoading(true);
       
@@ -55,7 +64,7 @@ export function useScrapeForm({ title, onScrape, enabled, defaultUrl, onError }:
         toast.warning("MPs scraper might hit resource limits with depth > 2. Consider lowering the depth.");
       }
       
-      await onScrape({ url, depth });
+      await onScrape({ url, depth, maxItems });
     } catch (error) {
       console.error(`Error scraping ${title}:`, error);
       if (onError) {
@@ -72,6 +81,7 @@ export function useScrapeForm({ title, onScrape, enabled, defaultUrl, onError }:
     isLoading,
     urlRef,
     depthRef,
+    maxItemsRef,
     handleSubmit
   };
 }

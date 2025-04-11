@@ -5,8 +5,6 @@ import { supabase } from "@/integrations/supabase/client";
 import ScrapeConfigToggle from "./ScrapeConfigToggle";
 import ScrapeStatusBadge from "./ScrapeStatusBadge";
 import { useScrapeForm } from "@/hooks/useScrapeForm";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Loader2, StopCircle } from "lucide-react";
 import { stopScrapeJob } from "@/services/scrapeJobsService";
@@ -18,7 +16,7 @@ type ScrapeConfigCardProps = {
   description: string;
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
-  onScrape: (config: { url: string; depth: number }) => Promise<void>;
+  onScrape: (config: { url: string; depth: number; maxItems?: number }) => Promise<void>;
   activeJob?: { id: string; status: string; started_at: string; items_scraped?: number } | null;
   scrapeJobId?: string | null;
 };
@@ -57,7 +55,7 @@ const ScraperCard = memo(({
   };
   
   const defaultUrl = getDefaultUrl();
-  const { isLoading, urlRef, depthRef, handleSubmit } = useScrapeForm({
+  const { isLoading, urlRef, depthRef, maxItemsRef, handleSubmit } = useScrapeForm({
     title,
     onScrape,
     enabled,
@@ -114,7 +112,7 @@ const ScraperCard = memo(({
     if (isActiveJob && scrapeJobId && !isPolling) {
       setIsPolling(true);
       pollJobStatus(scrapeJobId);
-      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 3000);
+      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 1500); // Increased polling frequency
     } else if (!isActiveJob && isPolling) {
       setIsPolling(false);
     }
@@ -180,7 +178,7 @@ const ScraperCard = memo(({
               type="number" 
               defaultValue="2" 
               min="1" 
-              max="3" 
+              max="4" 
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={depthRef}
@@ -190,6 +188,23 @@ const ScraperCard = memo(({
                 For MPs, use a lower depth (1-2) to avoid resource limits
               </p>
             )}
+          </div>
+          
+          <div className="grid w-full items-center gap-1.5">
+            <Label htmlFor={`maxitems-${title}`}>Max Items (optional)</Label>
+            <Input 
+              id={`maxitems-${title}`} 
+              type="number" 
+              defaultValue={title.toLowerCase() === "mps" ? "100" : "200"} 
+              min="10" 
+              max={title.toLowerCase() === "mps" ? "200" : "500"} 
+              disabled={!enabled || isJobRunning} 
+              className="bg-background"
+              ref={maxItemsRef}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave at default or increase to get more data (may increase time)
+            </p>
           </div>
         </form>
       </CardContent>

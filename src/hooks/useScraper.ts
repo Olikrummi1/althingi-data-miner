@@ -1,9 +1,9 @@
-
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { createScrapeJob, stopScrapeJob, updateScrapeJobStatus } from "@/services/scrapeJobsService";
 import { getScrapeSettings } from "@/services/scrapeSettingsService";
+import { handleEdgeFunctionError } from "@/services/scrapedItemsService";
 
 export type ActiveJob = {
   id: string;
@@ -139,8 +139,7 @@ export default function useScraper() {
     
     loadActiveJobs();
     
-    // Increased polling frequency to get more up-to-date information
-    const intervalId = setInterval(loadActiveJobs, 2000); // Changed from 3000 to 2000
+    const intervalId = setInterval(loadActiveJobs, 2000);
     
     return () => clearInterval(intervalId);
   }, [activeJobs, totalItemsScraped, isLoadingJobs]);
@@ -152,7 +151,7 @@ export default function useScraper() {
     }));
   };
 
-  const handleScrape = async (id: string, config: { url: string; depth: number }) => {
+  const handleScrape = async (id: string, config: { url: string; depth: number; maxItems?: number }) => {
     if (!settings) {
       toast.error("Scrape settings not loaded");
       return;
@@ -161,7 +160,6 @@ export default function useScraper() {
     try {
       toast.info(`Setting up ${id} scraper...`);
       
-      // For MPs scraper, use more conservative settings to avoid resource limits
       let customConfig = { ...config };
       if (id === "mps") {
         if (customConfig.depth > 2) {
@@ -189,15 +187,16 @@ export default function useScraper() {
           } as ActiveJob
         }));
         
-        // Enhanced configuration to get more data
         const enhancedConfig = {
           ...settings,
           url: customConfig.url,
           depth: customConfig.depth,
-          // Adding additional settings to maximize data collection
-          max_items: id === "mps" ? 50 : 100, // Lower for MPs to prevent resource exhaustion
+          max_items: customConfig.maxItems || (id === "mps" ? 100 : 200),
           follow_links: true,
-          save_raw_html: settings.save_raw_html
+          save_raw_html: settings.save_raw_html,
+          throttle: Math.max(settings.throttle * 0.7, 300),
+          explore_breadth: id === "mps" ? 10 : 20,
+          timeout_seconds: Math.min(settings.timeout_seconds * 1.5, 60)
         };
         
         const { data, error } = await supabase.functions.invoke("run-scraper", {
@@ -228,16 +227,7 @@ export default function useScraper() {
         console.error("Error invoking scraper function:", error);
         await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
         
-        // Check if it's a resource limit error for MPs
-        if (id === "mps" && error.message && (
-            error.message.includes("non-2xx status code") || 
-            error.message.includes("WORKER_LIMIT") ||
-            error.message.includes("timeout")
-        )) {
-          toast.error(`The MPs scraper hit resource limits. Try with a smaller depth (1-2) or wait for other jobs to complete.`);
-        } else {
-          toast.error(`Failed to start ${id} scraper: ${error.message || "Unknown error"}`);
-        }
+        await handleEdgeFunctionError(error, id);
         
         setActiveJobs(prev => {
           const newJobs = { ...prev };
@@ -274,16 +264,14 @@ export default function useScraper() {
     
     for (const id of enabledScraperIds) {
       try {
-        // Get appropriate URL for this scraper type
         const baseUrl = getBaseUrlForScraper(id);
         
         await handleScrape(id, { 
           url: baseUrl, 
-          depth: settings?.max_depth || 3 // Increased from 2 to 3
+          depth: settings?.max_depth || 3
         });
         successCount++;
         
-        // Adding delay between scrapers to prevent overloading
         await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
@@ -302,7 +290,6 @@ export default function useScraper() {
     }
   };
   
-  // Helper function to get the most appropriate URL for each scraper type
   const getBaseUrlForScraper = (id: string): string => {
     switch(id) {
       case "bills":

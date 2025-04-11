@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -22,10 +23,10 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-const EDGE_FUNCTION_TIMEOUT_MS = 24000; // 24 seconds (conservative to allow for cleanup)
-const MAX_ITEMS_PER_TYPE = 100; // Increased max items per type
-const BATCH_SIZE = 10; // Increased batch size
-const SAVE_INTERVAL_MS = 5000; // Save every 5 seconds
+const EDGE_FUNCTION_TIMEOUT_MS = 25000; // 25 seconds (conservative to allow for cleanup)
+const MAX_ITEMS_PER_TYPE = 500; // Increased max items per type
+const BATCH_SIZE = 20; // Increased batch size
+const SAVE_INTERVAL_MS = 4000; // Save more frequently
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -45,7 +46,44 @@ function getMpUrls(): string[] {
     "https://www.althingi.is/altext/cv/is/",  // Alternative URL for MP info
     "https://www.althingi.is/thingmenn/",     // Main MPs section
     "https://www.althingi.is/thingmenn/thingmenn/",  // Another potential URL
+    "https://www.althingi.is/thingmenn/thingmenn-eftir-thingflokkum/", // By party
+    "https://www.althingi.is/thingmenn/thingmenn/thingrodun/", // By constituency
   ];
+}
+
+function getAdditionalStartUrls(scraperType: string): string[] {
+  switch(scraperType) {
+    case "bills":
+      return [
+        "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/",
+        "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/ferill-mala/",
+        "https://www.althingi.is/lagasafn/", // Laws repository
+      ];
+    case "votes":
+      return [
+        "https://www.althingi.is/thingstorf/atkvaedagreidslur/",
+        "https://www.althingi.is/thingstorf/atkvaedagreidslur/atkvaedagreidslur-a-151-loggjafarthingi/",
+        "https://www.althingi.is/thingstorf/atkvaedagreidslur/atkvaedagreidslur-a-152-loggjafarthingi/",
+      ];
+    case "speeches":
+      return [
+        "https://www.althingi.is/altext/raedur/",
+        "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/umraedur-um-einstok-mal/",
+      ];
+    case "committees":
+      return [
+        "https://www.althingi.is/thingnefndir/fastanefndir/", 
+        "https://www.althingi.is/thingnefndir/nefndarfundir/",
+        "https://www.althingi.is/thingnefndir/",
+      ];
+    case "issues":
+      return [
+        "https://www.althingi.is/thingstorf/thingmalalistar-eftir-thingum/",
+        "https://www.althingi.is/thingstorf/thing-og-mal/",
+      ];
+    default:
+      return [];
+  }
 }
 
 function getBaseUrl(scraperType: string): string {
@@ -87,7 +125,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
     try {
       if (attempt > 0) {
         console.log(`Retry attempt ${attempt + 1} for ${url}`);
-        await new Promise(resolve => setTimeout(resolve, delayMs * Math.pow(2, attempt)));
+        await new Promise(resolve => setTimeout(resolve, delayMs * Math.pow(1.5, attempt)));
       }
       
       const response = await fetch(url, options);
@@ -99,7 +137,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
       console.error(`Attempt ${attempt + 1} failed with status ${response.status}: ${response.statusText}`);
       
       if (response.status === 403 || response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, delayMs * 3));
+        await new Promise(resolve => setTimeout(resolve, delayMs * 2));
       }
       
       if (attempt === maxRetries - 1) {
@@ -117,6 +155,7 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
+// Functions for extracting different types of data
 function extractMpDataFromHtml(html: string): any[] {
   console.log("Manually extracting MP data from HTML...");
   
@@ -376,10 +415,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = Math.min(config.depth || 3, 5); // Increased max depth to 5
-  const throttle = Math.max(config.throttle || 1000, 300); // Reduced minimum throttle to 300ms
+  const maxDepth = Math.min(config.depth || 3, 6); // Increased max depth to 6
+  const throttle = Math.max(config.throttle || 1000, 200); // Reduced minimum throttle to 200ms
   const saveRawHtml = config.save_raw_html || false;
-  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000); // Increased maximum timeout to 15 seconds
+  const timeout = Math.min((config.timeout_seconds || 20) * 1000, 20000); // Increased maximum timeout
+  const exploreBreadth = config.explore_breadth || 15; // How many links to follow at each depth
+  const maxItems = config.max_items || MAX_ITEMS_PER_TYPE;
   
   let itemsScraped = 0;
   let urlsToVisit: string[] = [];
@@ -388,8 +429,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     urlsToVisit = getMpUrls();
   } else {
     const baseUrl = config.url || getBaseUrl(scraperType);
-    urlsToVisit = [baseUrl];
+    urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType)];
   }
+  
+  // Remove duplicate URLs
+  urlsToVisit = [...new Set(urlsToVisit)];
   
   const visitedUrls = new Set<string>();
   const scrapedItems: any[] = [];
@@ -485,7 +529,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           .eq("id", jobId);
         console.log(`Updated job status: ${itemsScraped} items scraped`);
       }
-    }, 3000);
+    }, 2000); // More frequent updates
     
     for (const startUrl of urlsToVisit) {
       if (visitedUrls.has(startUrl) || isTimedOut) continue;
@@ -493,12 +537,14 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       let currentDepthUrls = [startUrl];
       console.log(`Starting with URL: ${startUrl}`);
       
+      // Process each level of depth
       for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0 && !isTimedOut; depth++) {
         console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
         
         const nextDepthUrls: string[] = [];
         
-        const urlsToProcess = currentDepthUrls.slice(0, 10); // Increased from 3 to 10
+        // Take more URLs at each depth for better coverage
+        const urlsToProcess = currentDepthUrls.slice(0, Math.min(20, currentDepthUrls.length)); 
         
         for (const url of urlsToProcess) {
           if (isTimedOut) break;
@@ -528,8 +574,8 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           if (visitedUrls.has(url)) continue;
           visitedUrls.add(url);
           
-          if (itemsScraped >= MAX_ITEMS_PER_TYPE) {
-            console.log(`Reached maximum items limit (${MAX_ITEMS_PER_TYPE}), stopping scrape`);
+          if (itemsScraped >= maxItems) {
+            console.log(`Reached maximum items limit (${maxItems}), stopping scrape`);
             break;
           }
           
@@ -579,6 +625,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
+            // Special handling for MP pages
             if (validType === "mp" && 
                 (url.includes("/thingmenn/althingismenn/") || 
                 url.includes("/thingmenn/") || 
@@ -621,6 +668,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               }
             }
             
+            // Process MP profile pages
             const mpProfile = mpProfiles.find(p => p.url === url);
             if (validType === "mp" && mpProfile) {
               console.log(`Processing MP profile page for URL: ${url}`);
@@ -652,48 +700,111 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
+            // Extract content for the current page based on type
             let title = "";
             let content = "";
+            let metadata: Record<string, any> = {};
             
             switch (validType) {
               case "bill":
-                const billTitle = doc.querySelector("h1, .title, .name")?.textContent?.trim();
-                const billContent = doc.querySelector(".content, .text, article")?.textContent?.trim();
+                const billTitle = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
+                const billContent = doc.querySelector(".content, .text, article, main p")?.textContent?.trim();
+                
+                // Extract bill metadata
+                const billNumberEl = doc.querySelector(".number, .bill-number, [class*='number']");
+                const billNumber = billNumberEl ? billNumberEl.textContent?.trim() : "";
+                
+                const sessionEl = doc.querySelector(".session, .parliament, [class*='session']");
+                const session = sessionEl ? sessionEl.textContent?.trim() : "";
+                
+                const statusEl = doc.querySelector(".status, .bill-status, [class*='status']");
+                const status = statusEl ? statusEl.textContent?.trim() : "";
+                
                 title = billTitle || `Bill from ${url}`;
                 content = billContent || "";
+                metadata = {
+                  billNumber,
+                  session,
+                  status
+                };
                 break;
               
               case "vote":
-                const voteTitle = doc.querySelector("h1, .heading, .title")?.textContent?.trim();
-                const voteResults = doc.querySelector(".results, .votes, table")?.textContent?.trim();
+                const voteTitle = doc.querySelector("h1, .heading, .title, header h2")?.textContent?.trim();
+                const voteResults = doc.querySelector(".results, .votes, table, .vote-results")?.textContent?.trim();
+                
+                // Extract voting metadata
+                const voteDate = doc.querySelector(".date, time, [class*='date']")?.textContent?.trim();
+                const voteCount = doc.querySelector(".count, .vote-count, [class*='count']")?.textContent?.trim();
+                
                 title = voteTitle || `Vote from ${url}`;
                 content = voteResults || "";
+                metadata = {
+                  date: voteDate,
+                  count: voteCount
+                };
                 break;
               
               case "speech":
-                const speechTitle = doc.querySelector("h1, .title, .header")?.textContent?.trim();
-                const speechText = doc.querySelector(".speech-content, .text, article")?.textContent?.trim();
+                const speechTitle = doc.querySelector("h1, .title, .header, [class*='title']")?.textContent?.trim();
+                const speechText = doc.querySelector(".speech-content, .text, article, main p")?.textContent?.trim();
+                
+                // Extract speech metadata
+                const speakerEl = doc.querySelector(".speaker, .author, [class*='speaker']");
+                const speaker = speakerEl ? speakerEl.textContent?.trim() : "";
+                
+                const dateEl = doc.querySelector(".date, time, [class*='date']");
+                const date = dateEl ? dateEl.textContent?.trim() : "";
+                
                 title = speechTitle || `Speech from ${url}`;
                 content = speechText || "";
+                metadata = {
+                  speaker,
+                  date
+                };
                 break;
               
               case "committee":
-                const committeeName = doc.querySelector("h1, .name, .title")?.textContent?.trim();
-                const committeeDesc = doc.querySelector(".description, .info, .about")?.textContent?.trim();
+                const committeeName = doc.querySelector("h1, .name, .title, header h2")?.textContent?.trim();
+                const committeeDesc = doc.querySelector(".description, .info, .about, article p")?.textContent?.trim();
+                
+                // Extract committee metadata
+                const chairEl = doc.querySelector(".chair, .chairman, .chairperson, [class*='chair']");
+                const chair = chairEl ? chairEl.textContent?.trim() : "";
+                
+                const membersEl = doc.querySelector(".members, .committee-members, [class*='members']");
+                const members = membersEl ? membersEl.textContent?.trim() : "";
+                
                 title = committeeName || `Committee from ${url}`;
                 content = committeeDesc || "";
+                metadata = {
+                  chair,
+                  members
+                };
                 break;
               
               case "issue":
-                const issueName = doc.querySelector("h1, .title, .name")?.textContent?.trim();
-                const issueDesc = doc.querySelector(".description, .text, .content")?.textContent?.trim();
+                const issueName = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
+                const issueDesc = doc.querySelector(".description, .text, .content, article p")?.textContent?.trim();
+                
+                // Extract issue metadata
+                const categoryEl = doc.querySelector(".category, .issue-category, [class*='category']");
+                const category = categoryEl ? categoryEl.textContent?.trim() : "";
+                
+                const statusElement = doc.querySelector(".status, .issue-status, [class*='status']");
+                const issueStatus = statusElement ? statusElement.textContent?.trim() : "";
+                
                 title = issueName || `Issue from ${url}`;
                 content = issueDesc || "";
+                metadata = {
+                  category,
+                  status: issueStatus
+                };
                 break;
               
               default:
-                title = doc.querySelector("h1")?.textContent?.trim() || `Content from ${url}`;
-                content = doc.querySelector("main, .content, article")?.textContent?.trim() || "";
+                title = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim() || `Content from ${url}`;
+                content = doc.querySelector("main, .content, article, .text, p")?.textContent?.trim() || "";
             }
             
             if (title) {
@@ -705,6 +816,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 url: normalizedUrl,
                 type: validType,
                 scraped_at: new Date().toISOString(),
+                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
                 raw_html: saveRawHtml ? html : null
               };
               
@@ -725,12 +837,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 .eq("id", jobId);
             }
             
+            // Find more links to follow for the next depth
             if (depth < maxDepth - 1 && !isTimedOut) {
               const links = doc.querySelectorAll("a");
-              const linkLimit = 20; // Increased from 3 to 20
               let linkCount = 0;
               
-              for (let i = 0; i < links.length && linkCount < linkLimit && !isTimedOut; i++) {
+              for (let i = 0; i < links.length && linkCount < exploreBreadth && !isTimedOut; i++) {
                 const link = links[i];
                 const href = link.getAttribute("href");
                 
@@ -738,9 +850,25 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 
                 const nextUrl = normalizeUrl(href, url);
                 
+                // Only follow links on the same site
                 if (!nextUrl.includes("althingi.is")) continue;
                 
-                if (!visitedUrls.has(nextUrl)) {
+                // Prioritize relevant links based on the type we're scraping
+                let shouldInclude = true;
+                
+                if (validType === "bill" && !nextUrl.includes("thingmal") && !nextUrl.includes("lagasafn")) {
+                  shouldInclude = false;
+                } else if (validType === "vote" && !nextUrl.includes("atkvaeda")) {
+                  shouldInclude = false;
+                } else if (validType === "speech" && !nextUrl.includes("raed")) {
+                  shouldInclude = false;
+                } else if (validType === "mp" && !nextUrl.includes("thingm")) {
+                  shouldInclude = false;
+                } else if (validType === "committee" && !nextUrl.includes("nefnd")) {
+                  shouldInclude = false;
+                } 
+                
+                if (shouldInclude && !visitedUrls.has(nextUrl)) {
                   nextDepthUrls.push(nextUrl);
                   linkCount++;
                 }
@@ -753,10 +881,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           }
         }
         
-        currentDepthUrls = nextDepthUrls.slice(0, 20); // Increased from 5 to 20
+        // Limit the number of URLs for the next depth to avoid explosions
+        currentDepthUrls = nextDepthUrls.slice(0, Math.min(30, nextDepthUrls.length));
       }
     }
     
+    // Save any remaining items
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
@@ -764,6 +894,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
+    // Attempt direct HTML extraction if no items were found with DOM parser
     if (scrapedItems.length === 0 && successfulResponses.size > 0) {
       console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
       
@@ -818,7 +949,8 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       .update({ 
         status: "failed", 
         completed_at: new Date().toISOString(),
-        error_message: error instanceof Error ? error.message : String(error)
+        error_message: error instanceof Error ? error.message : String(error),
+        items_scraped: itemsScraped
       })
       .eq("id", jobId);
     
@@ -834,10 +966,15 @@ async function isJobStillActive(jobId: string): Promise<boolean> {
       .from("scrape_jobs")
       .select("status")
       .eq("id", jobId)
-      .single();
+      .maybeSingle();
     
     if (error) {
       console.error("Error checking job status:", error);
+      return false;
+    }
+    
+    if (!data) {
+      console.error("No job found with ID:", jobId);
       return false;
     }
     
