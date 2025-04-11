@@ -194,11 +194,9 @@ const ScraperCard = memo(({
               className="bg-background"
               ref={depthRef}
             />
-            {isMpsScraper && (
-              <p className="text-xs text-red-500 mt-1">
-                MPs scraper is resource-intensive. Keep depth at 1 for better performance.
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground">
+              Higher depth values will scrape more pages but take longer.
+            </p>
           </div>
           
           <div className="grid w-full items-center gap-1.5">
@@ -213,10 +211,8 @@ const ScraperCard = memo(({
               className="bg-background"
               ref={maxItemsRef}
             />
-            <p className="text-xs text-gray-500 mt-1">
-              {isMpsScraper 
-                ? "For MPs, keep this below 100 to avoid timeout errors" 
-                : "Lower values reduce resource usage and prevent timeouts"}
+            <p className="text-xs text-muted-foreground">
+              Maximum number of pages to scrape. Lower values prevent timeouts.
             </p>
           </div>
         </form>

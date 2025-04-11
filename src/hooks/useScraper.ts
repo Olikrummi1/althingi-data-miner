@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -79,7 +80,11 @@ export default function useScraper() {
       try {
         const settings = await getScrapeSettings();
         if (settings) {
-          setSettings(settings);
+          // Modify settings to always save raw HTML
+          setSettings({
+            ...settings,
+            save_raw_html: true
+          });
         }
       } catch (error) {
         console.error("Error loading settings:", error);
@@ -213,7 +218,7 @@ export default function useScraper() {
           depth: customConfig.depth,
           max_items: customConfig.maxItems || (id === "mps" ? 50 : 100),
           follow_links: true,
-          save_raw_html: false, 
+          save_raw_html: true, // Always save raw HTML
           throttle: Math.max(settings.throttle, 500), 
           explore_breadth: id === "mps" ? 5 : 10, 
           timeout_seconds: Math.min(settings.timeout_seconds, 30) 

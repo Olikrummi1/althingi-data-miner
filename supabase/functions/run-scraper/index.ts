@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.24.0";
 import { DOMParser } from "https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts";
@@ -148,258 +149,53 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
-function extractMpDataFromHtml(html: string): any[] {
-  console.log("Manually extracting MP data from HTML...");
+// Function to extract all text from a document
+function extractAllTextFromDocument(doc: any): string {
+  if (!doc) return "";
   
-  const mps: any[] = [];
+  // Get all text nodes from the document body
+  const textContent = doc.body ? doc.body.textContent : doc.textContent;
   
+  // Clean up the text (remove excess whitespace)
+  return textContent
+    ? textContent.replace(/\s+/g, ' ').trim()
+    : "";
+}
+
+// Function to extract all text from HTML string
+function extractAllTextFromHtml(html: string): string {
+  if (!html) return "";
+  
+  // Simple regex to strip HTML tags
+  const textContent = html.replace(/<[^>]*>/g, ' ');
+  
+  // Clean up the text (remove excess whitespace)
+  return textContent.replace(/\s+/g, ' ').trim();
+}
+
+async function isJobStillActive(jobId: string): Promise<boolean> {
   try {
-    const tablePattern = /<table[^>]*>[\s\S]*?<\/table>/gi;
-    const tableMatch = html.match(tablePattern);
+    const { data, error } = await supabase
+      .from("scrape_jobs")
+      .select("status")
+      .eq("id", jobId)
+      .maybeSingle();
     
-    if (!tableMatch) {
-      console.log("No table found in HTML");
-      return mps;
+    if (error) {
+      console.error("Error checking job status:", error);
+      return false;
     }
     
-    const table = tableMatch[0];
-    
-    const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    const rows = Array.from(table.matchAll(rowPattern)).map(m => m[0]);
-    
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      
-      const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-      const cells = Array.from(row.matchAll(cellPattern)).map(m => m[1]);
-      
-      if (cells.length >= 4) {
-        const nameCell = cells[0];
-        const linkMatch = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i.exec(nameCell);
-        
-        if (linkMatch) {
-          const url = linkMatch[1];
-          const name = linkMatch[2].replace(/<[^>]*>/g, '').trim();
-          
-          const constituencyCell = cells[2];
-          const partyCell = cells[3];
-          
-          const constituency = constituencyCell.replace(/<[^>]*>/g, '').trim();
-          const party = partyCell.replace(/<[^>]*>/g, '').trim();
-          
-          mps.push({
-            title: name,
-            content: `MP from ${constituency}, representing ${party}`,
-            url: url.startsWith('http') ? url : `https://www.althingi.is${url.startsWith('/') ? '' : '/'}${url}`,
-            type: "mp",
-            metadata: {
-              party,
-              constituency,
-              source: "mp_list"
-            },
-            profileUrl: url.startsWith('http') ? url : `https://www.althingi.is${url.startsWith('/') ? '' : '/'}${url}`
-          });
-        }
-      }
+    if (!data) {
+      console.error("No job found with ID:", jobId);
+      return false;
     }
     
-    console.log(`Manually extracted ${mps.length} MPs from HTML`);
+    return data.status === "running" || data.status === "pending";
   } catch (error) {
-    console.error("Error extracting MP data manually:", error);
+    console.error("Error in isJobStillActive:", error);
+    return false;
   }
-  
-  return mps;
-}
-
-function extractMpProfileDataFromHtml(html: string, url: string, baseData: any = null): any {
-  console.log(`Manually extracting MP profile data from HTML for ${url}`);
-  
-  try {
-    const mpData = baseData ? { ...baseData } : {
-      title: "",
-      content: "",
-      url: url,
-      type: "mp",
-      metadata: {}
-    };
-    
-    if (!mpData.title || mpData.title.length === 0) {
-      const namePattern = /<h1[^>]*>([\s\S]*?)<\/h1>/i;
-      const nameMatch = html.match(namePattern);
-      if (nameMatch) {
-        mpData.title = nameMatch[1].replace(/<[^>]*>/g, '').trim();
-      }
-    }
-    
-    const imagePattern = /<img[^>]*src="([^"]*myndir[^"]*)"[^>]*>/i;
-    const imageMatch = html.match(imagePattern);
-    if (imageMatch) {
-      const imageSrc = imageMatch[1];
-      mpData.metadata.imageUrl = imageSrc.startsWith('http') ? imageSrc : `https://www.althingi.is${imageSrc.startsWith('/') ? '' : '/'}${imageSrc}`;
-    }
-    
-    const emailPattern = /<a[^>]*href="mailto:([^"]*)"[^>]*>/i;
-    const emailMatch = html.match(emailPattern);
-    if (emailMatch) {
-      mpData.metadata.email = emailMatch[1];
-    }
-    
-    const bioPattern = /<div[^>]*class="[^"]*bio[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-    const bioMatch = html.match(bioPattern);
-    if (bioMatch) {
-      mpData.content = bioMatch[1].replace(/<[^>]*>/g, '').trim();
-    } else {
-      const paragraphPattern = /<p[^>]*>([\s\S]*?)<\/p>/gi;
-      const paragraphs = Array.from(html.matchAll(paragraphPattern))
-        .map(m => m[1].replace(/<[^>]*>/g, '').trim())
-        .filter(p => p.length > 100);
-      
-      if (paragraphs.length > 0) {
-        mpData.content = paragraphs[0];
-      }
-    }
-    
-    const socialLinks: string[] = [];
-    const socialPattern = /<a[^>]*href="([^"]*(facebook|twitter|instagram)[^"]*)"[^>]*>/gi;
-    let socialMatch;
-    while ((socialMatch = socialPattern.exec(html)) !== null) {
-      socialLinks.push(socialMatch[1]);
-    }
-    
-    if (socialLinks.length > 0) {
-      mpData.metadata.socialLinks = socialLinks;
-    }
-    
-    console.log(`Successfully extracted profile data for ${mpData.title || 'MP'}`);
-    return mpData;
-  } catch (error) {
-    console.error("Error extracting MP profile data:", error);
-    return baseData || {
-      title: "MP Profile",
-      content: "Error extracting profile data",
-      url: url,
-      type: "mp",
-      metadata: {}
-    };
-  }
-}
-
-async function extractMpListData(doc: any, baseUrl: string, html: string): Promise<any[]> {
-  const mps = [];
-  console.log("Extracting MPs data from list page");
-  
-  if (doc) {
-    const table = doc.querySelector("table");
-    
-    if (table) {
-      const rows = table.querySelectorAll("tr:not(:first-child)");
-      
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const cells = row.querySelectorAll("td");
-        
-        if (cells.length >= 4) {
-          const nameCell = cells[0];
-          const partyCell = cells[3];
-          const constituencyCell = cells[2];
-          
-          const link = nameCell.querySelector("a");
-          const mpUrl = link ? link.getAttribute("href") : null;
-          const normalizedMpUrl = mpUrl ? normalizeUrl(mpUrl, baseUrl) : null;
-          
-          const name = nameCell.textContent?.trim() || "";
-          const party = partyCell.textContent?.trim() || "";
-          const constituency = constituencyCell.textContent?.trim() || "";
-          
-          if (name && normalizedMpUrl) {
-            mps.push({
-              title: name,
-              content: `MP from ${constituency}, representing ${party}`,
-              url: normalizedMpUrl,
-              type: "mp",
-              metadata: {
-                party,
-                constituency,
-                source: "mp_list"
-              },
-              profileUrl: normalizedMpUrl
-            });
-          }
-        }
-      }
-    }
-  }
-  
-  if (mps.length === 0 && html) {
-    return extractMpDataFromHtml(html);
-  }
-  
-  console.log(`Found ${mps.length} MPs in the list`);
-  return mps;
-}
-
-async function extractMpProfileData(doc: any, url: string, html: string, baseData: any = null): Promise<any> {
-  console.log(`Extracting MP profile data from ${url}`);
-  
-  const mpData = baseData ? { ...baseData } : {
-    title: "",
-    content: "",
-    url: url,
-    type: "mp",
-    metadata: {}
-  };
-  
-  if (doc) {
-    if (!mpData.title || mpData.title.length === 0) {
-      const nameElement = doc.querySelector("h1") || doc.querySelector(".name") || doc.querySelector("header h2");
-      if (nameElement) {
-        mpData.title = nameElement.textContent?.trim() || "";
-      }
-    }
-    
-    const imageElement = doc.querySelector("img[src*='myndir']") || doc.querySelector(".profile-image img") || doc.querySelector("img[alt*='mynd']");
-    if (imageElement) {
-      const imageSrc = imageElement.getAttribute("src");
-      if (imageSrc) {
-        mpData.metadata.imageUrl = normalizeUrl(imageSrc, url);
-      }
-    }
-    
-    const positionElement = doc.querySelector(".position") || doc.querySelector("[class*='position']") || doc.querySelector(".title") || doc.querySelector("h3");
-    if (positionElement) {
-      mpData.metadata.position = positionElement.textContent?.trim() || "";
-    }
-    
-    const bioElement = doc.querySelector(".bio") || doc.querySelector(".about") || doc.querySelector(".description") || doc.querySelector("article p");
-    if (bioElement) {
-      mpData.content = bioElement.textContent?.trim() || mpData.content;
-    }
-    
-    const emailElement = doc.querySelector("[href^='mailto:']") || doc.querySelector(".email") || doc.querySelector("a[href*='@']");
-    if (emailElement) {
-      const email = emailElement.getAttribute("href")?.replace("mailto:", "") || emailElement.textContent?.trim();
-      if (email) {
-        mpData.metadata.email = email;
-      }
-    }
-    
-    const socialLinks = doc.querySelectorAll("a[href*='facebook'], a[href*='twitter'], a[href*='instagram']");
-    if (socialLinks.length > 0) {
-      mpData.metadata.socialLinks = [];
-      for (let i = 0; i < socialLinks.length; i++) {
-        const link = socialLinks[i];
-        const href = link.getAttribute("href");
-        if (href) {
-          mpData.metadata.socialLinks.push(href);
-        }
-      }
-    }
-  } else if (html) {
-    return extractMpProfileDataFromHtml(html, url, baseData);
-  }
-  
-  console.log(`Extracted profile data for ${mpData.title}`);
-  return mpData;
 }
 
 async function scrapeData(scraperType: string, config: any, jobId: string) {
@@ -409,7 +205,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const maxDepth = Math.min(config.depth || 2, 3); // Reduced max depth
   const throttle = Math.max(config.throttle || 1000, 300); // Increased minimum throttle
-  const saveRawHtml = config.save_raw_html || false;
+  const saveRawHtml = true; // Always save raw HTML
   const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000); // Reduced maximum timeout
   const exploreBreadth = Math.min(config.explore_breadth || 10, 10); // Reduced breadth to explore
   const maxItems = Math.min(config.max_items || 100, MAX_ITEMS_PER_TYPE); // Lower default and cap
@@ -670,209 +466,49 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
-            if (validType === "mp" && 
-                (url.includes("/thingmenn/althingismenn/") || 
-                url.includes("/thingmenn/") || 
-                url.includes("/altext/cv/is/"))) {
-              
-              console.log("Processing MPs list page");
-              const mpList = await extractMpListData(doc, url, html);
-              
-              if (mpList.length > 0) {
-                console.log(`Successfully found ${mpList.length} MPs in the list`);
-                
-                for (const mp of mpList) {
-                  mp.scraped_at = new Date().toISOString();
-                  scrapedItems.push(mp);
-                  scrapedItemsBatch.push(mp);
-                  itemsScraped++;
-                  
-                  if (depth < maxDepth - 1 && mp.profileUrl) {
-                    nextDepthUrls.push(mp.profileUrl);
-                    mpProfiles.push({
-                      url: mp.profileUrl,
-                      baseData: mp
-                    });
-                  }
-                  
-                  batchCount++;
-                  if (batchCount >= BATCH_SIZE) {
-                    await saveBatchToDb(scrapedItemsBatch);
-                    scrapedItemsBatch.length = 0;
-                    batchCount = 0;
-                  }
-                }
-                
-                await supabase
-                  .from("scrape_jobs")
-                  .update({ items_scraped: itemsScraped })
-                  .eq("id", jobId);
-                
-                continue;
-              }
+            // Extract all text content from the document
+            const allTextContent = extractAllTextFromDocument(doc);
+            
+            // Create the title - use h1 if available, otherwise use the URL
+            const title = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim() || `Content from ${url}`;
+            
+            // Create the normalized URL
+            const normalizedUrl = normalizeUrl(url, startUrl);
+            
+            // Create the metadata with page type and URL info
+            const metadata: Record<string, any> = {
+              pageType: validType,
+              sourceUrl: url,
+              scrapedDate: new Date().toISOString(),
+              textLength: allTextContent.length
+            };
+            
+            // Create a new item with all the text content
+            const newItem = {
+              title,
+              content: allTextContent,
+              url: normalizedUrl,
+              type: validType,
+              scraped_at: new Date().toISOString(),
+              metadata,
+              raw_html: html // Always save raw HTML
+            };
+            
+            scrapedItems.push(newItem);
+            scrapedItemsBatch.push(newItem);
+            itemsScraped++;
+            
+            batchCount++;
+            if (batchCount >= BATCH_SIZE) {
+              await saveBatchToDb(scrapedItemsBatch);
+              scrapedItemsBatch.length = 0;
+              batchCount = 0;
             }
             
-            const mpProfile = mpProfiles.find(p => p.url === url);
-            if (validType === "mp" && mpProfile) {
-              console.log(`Processing MP profile page for URL: ${url}`);
-              const profileData = await extractMpProfileData(doc, url, html, mpProfile.baseData);
-              
-              profileData.scraped_at = new Date().toISOString();
-              
-              const existingIndex = scrapedItems.findIndex(item => item.url === url);
-              if (existingIndex >= 0) {
-                scrapedItems[existingIndex] = profileData;
-              } else {
-                scrapedItems.push(profileData);
-                scrapedItemsBatch.push(profileData);
-                itemsScraped++;
-                
-                batchCount++;
-                if (batchCount >= BATCH_SIZE) {
-                  await saveBatchToDb(scrapedItemsBatch);
-                  scrapedItemsBatch.length = 0;
-                  batchCount = 0;
-                }
-              }
-              
-              await supabase
-                .from("scrape_jobs")
-                .update({ items_scraped: itemsScraped })
-                .eq("id", jobId);
-              
-              continue;
-            }
-            
-            let title = "";
-            let content = "";
-            let metadata: Record<string, any> = {};
-            
-            switch (validType) {
-              case "bill":
-                const billTitle = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
-                const billContent = doc.querySelector(".content, .text, article, main p")?.textContent?.trim();
-                
-                const billNumberEl = doc.querySelector(".number, .bill-number, [class*='number']");
-                const billNumber = billNumberEl ? billNumberEl.textContent?.trim() : "";
-                
-                const sessionEl = doc.querySelector(".session, .parliament, [class*='session']");
-                const session = sessionEl ? sessionEl.textContent?.trim() : "";
-                
-                const statusEl = doc.querySelector(".status, .bill-status, [class*='status']");
-                const status = statusEl ? statusEl.textContent?.trim() : "";
-                
-                title = billTitle || `Bill from ${url}`;
-                content = billContent || "";
-                metadata = {
-                  billNumber,
-                  session,
-                  status
-                };
-                break;
-              
-              case "vote":
-                const voteTitle = doc.querySelector("h1, .heading, .title, header h2")?.textContent?.trim();
-                const voteResults = doc.querySelector(".results, .votes, table, .vote-results")?.textContent?.trim();
-                
-                const voteDate = doc.querySelector(".date, time, [class*='date']")?.textContent?.trim();
-                const voteCount = doc.querySelector(".count, .vote-count, [class*='count']")?.textContent?.trim();
-                
-                title = voteTitle || `Vote from ${url}`;
-                content = voteResults || "";
-                metadata = {
-                  date: voteDate,
-                  count: voteCount
-                };
-                break;
-              
-              case "speech":
-                const speechTitle = doc.querySelector("h1, .title, .header, [class*='title']")?.textContent?.trim();
-                const speechText = doc.querySelector(".speech-content, .text, article, main p")?.textContent?.trim();
-                
-                const speakerEl = doc.querySelector(".speaker, .author, [class*='speaker']");
-                const speaker = speakerEl ? speakerEl.textContent?.trim() : "";
-                
-                const dateEl = doc.querySelector(".date, time, [class*='date']");
-                const date = dateEl ? dateEl.textContent?.trim() : "";
-                
-                title = speechTitle || `Speech from ${url}`;
-                content = speechText || "";
-                metadata = {
-                  speaker,
-                  date
-                };
-                break;
-              
-              case "committee":
-                const committeeName = doc.querySelector("h1, .name, .title, header h2")?.textContent?.trim();
-                const committeeDesc = doc.querySelector(".description, .info, .about, article p")?.textContent?.trim();
-                
-                const chairEl = doc.querySelector(".chair, .chairman, .chairperson, [class*='chair']");
-                const chair = chairEl ? chairEl.textContent?.trim() : "";
-                
-                const membersEl = doc.querySelector(".members, .committee-members, [class*='members']");
-                const members = membersEl ? membersEl.textContent?.trim() : "";
-                
-                title = committeeName || `Committee from ${url}`;
-                content = committeeDesc || "";
-                metadata = {
-                  chair,
-                  members
-                };
-                break;
-              
-              case "issue":
-                const issueName = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim();
-                const issueDesc = doc.querySelector(".description, .text, .content, article p")?.textContent?.trim();
-                
-                const categoryEl = doc.querySelector(".category, .issue-category, [class*='category']");
-                const category = categoryEl ? categoryEl.textContent?.trim() : "";
-                
-                const statusElement = doc.querySelector(".status, .issue-status, [class*='status']");
-                const issueStatus = statusElement ? statusElement.textContent?.trim() : "";
-                
-                title = issueName || `Issue from ${url}`;
-                content = issueDesc || "";
-                metadata = {
-                  category,
-                  status: issueStatus
-                };
-                break;
-              
-              default:
-                title = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim() || `Content from ${url}`;
-                content = doc.querySelector("main, .content, article, .text, p")?.textContent?.trim() || "";
-            }
-            
-            if (title) {
-              const normalizedUrl = normalizeUrl(url, startUrl);
-              
-              const newItem = {
-                title,
-                content,
-                url: normalizedUrl,
-                type: validType,
-                scraped_at: new Date().toISOString(),
-                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-                raw_html: saveRawHtml ? html : null
-              };
-              
-              scrapedItems.push(newItem);
-              scrapedItemsBatch.push(newItem);
-              itemsScraped++;
-              
-              batchCount++;
-              if (batchCount >= BATCH_SIZE) {
-                await saveBatchToDb(scrapedItemsBatch);
-                scrapedItemsBatch.length = 0;
-                batchCount = 0;
-              }
-              
-              await supabase
-                .from("scrape_jobs")
-                .update({ items_scraped: itemsScraped })
-                .eq("id", jobId);
-            }
+            await supabase
+              .from("scrape_jobs")
+              .update({ items_scraped: itemsScraped })
+              .eq("id", jobId);
             
             if (depth < maxDepth - 1 && !isTimedOut) {
               const links = doc.querySelectorAll("a");
@@ -886,23 +522,10 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 
                 const nextUrl = normalizeUrl(href, url);
                 
+                // Accept any URL from althingi.is domain without filtering by content type
                 if (!nextUrl.includes("althingi.is")) continue;
                 
-                let shouldInclude = true;
-                
-                if (validType === "bill" && !nextUrl.includes("thingmal") && !nextUrl.includes("lagasafn")) {
-                  shouldInclude = false;
-                } else if (validType === "vote" && !nextUrl.includes("atkvaeda")) {
-                  shouldInclude = false;
-                } else if (validType === "speech" && !nextUrl.includes("raed")) {
-                  shouldInclude = false;
-                } else if (validType === "mp" && !nextUrl.includes("thingm")) {
-                  shouldInclude = false;
-                } else if (validType === "committee" && !nextUrl.includes("nefnd")) {
-                  shouldInclude = false;
-                } 
-                
-                if (shouldInclude && !visitedUrls.has(nextUrl)) {
+                if (!visitedUrls.has(nextUrl)) {
                   nextDepthUrls.push(nextUrl);
                   linkCount++;
                 }
@@ -926,30 +549,31 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
+    // If no items were found with the DOM parser, try direct HTML extraction
     if (scrapedItems.length === 0 && successfulResponses.size > 0) {
       console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
       
       for (const [url, data] of successfulResponses) {
-        if (validType === "mp") {
-          const mpData = extractMpDataFromHtml(data.html);
-          if (mpData.length > 0) {
-            for (const mp of mpData) {
-              mp.scraped_at = new Date().toISOString();
-              scrapedItems.push(mp);
-            }
-            
-            await saveBatchToDb(mpData, true);
-            itemsScraped += mpData.length;
-          } else {
-            const profileData = extractMpProfileDataFromHtml(data.html, url);
-            if (profileData.title) {
-              profileData.scraped_at = new Date().toISOString();
-              scrapedItems.push(profileData);
-              
-              await saveBatchToDb([profileData], true);
-              itemsScraped++;
-            }
-          }
+        const textContent = extractAllTextFromHtml(data.html);
+        
+        if (textContent) {
+          const newItem = {
+            title: `Content from ${url}`,
+            content: textContent,
+            url: url,
+            type: validType,
+            scraped_at: new Date().toISOString(),
+            metadata: {
+              extractionMethod: "direct",
+              textLength: textContent.length
+            },
+            raw_html: data.html
+          };
+          
+          scrapedItems.push(newItem);
+          
+          await saveBatchToDb([newItem], true);
+          itemsScraped++;
         }
       }
       
@@ -997,31 +621,6 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     clearTimeout(timeoutId);
     
     throw error;
-  }
-}
-
-async function isJobStillActive(jobId: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabase
-      .from("scrape_jobs")
-      .select("status")
-      .eq("id", jobId)
-      .maybeSingle();
-    
-    if (error) {
-      console.error("Error checking job status:", error);
-      return false;
-    }
-    
-    if (!data) {
-      console.error("No job found with ID:", jobId);
-      return false;
-    }
-    
-    return data.status === "running" || data.status === "pending";
-  } catch (error) {
-    console.error("Error in isJobStillActive:", error);
-    return false;
   }
 }
 
