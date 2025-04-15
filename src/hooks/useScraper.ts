@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -81,7 +82,7 @@ export default function useScraper() {
         if (settings) {
           setSettings({
             ...settings,
-            save_raw_html: true
+            save_raw_html: true // Always save raw HTML
           });
         }
       } catch (error) {
@@ -149,7 +150,8 @@ export default function useScraper() {
     
     loadActiveJobs();
     
-    const intervalId = setInterval(loadActiveJobs, 2000);
+    // More frequent polling (every 1.5 seconds)
+    const intervalId = setInterval(loadActiveJobs, 1500);
     
     return () => clearInterval(intervalId);
   }, [activeJobs, totalItemsScraped, isLoadingJobs, isPendingJobCompletion]);
@@ -167,31 +169,33 @@ export default function useScraper() {
       return;
     }
     
+    // Allow 3 active jobs instead of 2
     const activeJobsCount = Object.values(activeJobs).filter(job => 
       job.status === "running" || job.status === "pending"
     ).length;
     
-    if (activeJobsCount >= 2) {
+    if (activeJobsCount >= 3) {
       toast.error("Too many active scrape jobs. Please wait for the current jobs to complete before starting another.");
       return;
     }
     
     try {
       const setupToastId = toast.info(`Setting up ${id} scraper...`, {
-        duration: 10000
+        duration: 20000 // Longer duration for setup toast
       });
       
       setIsPendingJobCompletion(true);
       
       let customConfig = { ...config };
+      // Adjust constraints for MP scraper
       if (id === "mps") {
-        if (customConfig.depth > 2) {
-          toast.warning("Reducing MPs scrape depth to 2 to avoid resource limits");
-          customConfig.depth = 2;
+        if (customConfig.depth > 3) { // Increased from 2
+          toast.warning("Reducing MPs scrape depth to 3 to avoid resource limits");
+          customConfig.depth = 3;
         }
-        if (!customConfig.maxItems || customConfig.maxItems > 100) {
-          customConfig.maxItems = 100;
-          toast.info("Limiting MPs to 100 items to avoid timeouts");
+        if (!customConfig.maxItems || customConfig.maxItems > 200) { // Increased from 100
+          customConfig.maxItems = 200;
+          toast.info("Limiting MPs to 200 items to avoid timeouts");
         }
       }
       
@@ -206,6 +210,7 @@ export default function useScraper() {
       }
       
       try {
+        // Update active jobs immediately to show pending status
         setActiveJobs(prev => ({
           ...prev,
           [id]: { 
@@ -214,20 +219,21 @@ export default function useScraper() {
           } as ActiveJob
         }));
         
+        // Use config parameters with increased defaults
         const enhancedConfig = {
           ...settings,
           url: customConfig.url,
           depth: customConfig.depth,
-          max_items: customConfig.maxItems || (id === "mps" ? 50 : 100),
+          max_items: customConfig.maxItems || (id === "mps" ? 150 : 200), // Increased defaults
           follow_links: true,
           save_raw_html: true, // Always save raw HTML
-          throttle: Math.max(settings.throttle, 500), 
-          explore_breadth: id === "mps" ? 5 : 10, 
-          timeout_seconds: Math.min(settings.timeout_seconds, 30) 
+          throttle: Math.max(settings.throttle, 300), // Faster throttle
+          explore_breadth: id === "mps" ? 10 : 20, // Increased breadth 
+          timeout_seconds: Math.min(settings.timeout_seconds, 50) // Increased timeout
         };
         
         let retryCount = 0;
-        const maxRetries = 2;
+        const maxRetries = 3; // Increased from 2
         let success = false;
         let lastError;
         
@@ -242,6 +248,7 @@ export default function useScraper() {
               toast.dismiss(setupToastId);
             }
             
+            // Invoke the edge function to start scraping
             const { data, error } = await supabase.functions.invoke("run-scraper", {
               body: { 
                 type: id, 
@@ -259,6 +266,7 @@ export default function useScraper() {
             
             success = true;
             
+            // Update job status to running
             setActiveJobs(prev => ({
               ...prev,
               [id]: { 
@@ -267,7 +275,7 @@ export default function useScraper() {
               } as ActiveJob
             }));
             
-            toast.success(`Started scraping ${id}`);
+            toast.success(`Started scraping ${id} with comprehensive data capture`);
             setConsecutiveErrors(0); 
             
             setIsPendingJobCompletion(true);
@@ -280,6 +288,7 @@ export default function useScraper() {
           }
         }
         
+        // All retries failed
         await updateScrapeJobStatus(job.id, "failed", 0, lastError?.message || "Max retries exceeded");
         
         if (lastError) {
@@ -290,6 +299,7 @@ export default function useScraper() {
         
         setConsecutiveErrors(prev => prev + 1);
         
+        // Remove failed job from active jobs
         setActiveJobs(prev => {
           const newJobs = { ...prev };
           delete newJobs[id];
@@ -302,24 +312,28 @@ export default function useScraper() {
       } catch (error: any) {
         console.error(`Error scraping ${id}:`, error);
         
+        // Better error messaging
         if (error.message?.includes("timeout") || error.message?.includes("busy")) {
-          toast.error(`Server busy or timed out. Try again with smaller depth and max items.`);
+          toast.error(`Server busy or timed out. Try with a smaller depth (1-2) and fewer max items.`);
         } else if (error.message?.includes("resource") || error.message?.includes("memory")) {
-          toast.error(`Resource limit reached. Try again with smaller depth and max items.`);
+          toast.error(`Resource limit reached. Try with a smaller depth (1-2) and fewer max items.`);
         } else {
           await updateScrapeJobStatus(job.id, "failed", 0, error.message || "Unknown error");
         }
         
+        // Enhanced troubleshooting on multiple errors
         if (consecutiveErrors >= 2) {
           toast.error("Multiple scrape attempts failed. Try these troubleshooting steps:", {
-            duration: 8000,
+            duration: 10000,
           });
           
-          toast.info("1. Reduce scrape depth to 1", { duration: 7000 });
-          toast.info("2. Lower max items to 50", { duration: 7000 });
-          toast.info("3. Wait a few minutes before trying again", { duration: 7000 });
+          toast.info("1. Reduce scrape depth to 1", { duration: 8000 });
+          toast.info("2. Lower max items to 50", { duration: 8000 });
+          toast.info("3. Try scrapers one at a time instead of in parallel", { duration: 8000 });
+          toast.info("4. Wait a few minutes before trying again", { duration: 8000 });
         }
         
+        // Remove failed job from active jobs
         setActiveJobs(prev => {
           const newJobs = { ...prev };
           delete newJobs[id];
@@ -350,8 +364,9 @@ export default function useScraper() {
       return;
     }
     
+    // More cautious warning message
     if (enabledCount > 2) {
-      toast.warning("Running multiple scrapers simultaneously may cause timeouts. Consider running fewer at once.");
+      toast.warning("Running multiple scrapers simultaneously may cause timeouts or incomplete data. Consider running fewer at once for more reliable results.");
     }
     
     setIsRunningAll(true);
@@ -360,6 +375,7 @@ export default function useScraper() {
     let successCount = 0;
     let errorCount = 0;
     
+    // Run MPs last since it's typically more resource-intensive
     const prioritizedScrapers = [...enabledScraperIds].sort((a, b) => {
       if (a === "mps") return 1;
       if (b === "mps") return -1;
@@ -370,8 +386,9 @@ export default function useScraper() {
       try {
         const baseUrl = getBaseUrlForScraper(id);
         
+        // More conservative depth and maxItems values for batch scraping
         const maxDepth = id === "mps" ? 1 : 2;
-        const maxItems = id === "mps" ? 50 : 100;
+        const maxItems = id === "mps" ? 100 : 150;
         
         await handleScrape(id, { 
           url: baseUrl, 
@@ -380,15 +397,20 @@ export default function useScraper() {
         });
         successCount++;
         
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Wait longer between scrape jobs
+        await new Promise(resolve => setTimeout(resolve, 5000));
       } catch (error) {
         console.error(`Error scraping ${id}:`, error);
         errorCount++;
         
+        // Stop after 2 errors to prevent overloading
         if (errorCount >= 2) {
           toast.error("Multiple errors occurred. Stopping batch scrape to prevent overloading.");
           break;
         }
+        
+        // Wait even longer after an error
+        await new Promise(resolve => setTimeout(resolve, 8000));
       }
     }
     

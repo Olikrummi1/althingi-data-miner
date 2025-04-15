@@ -39,7 +39,12 @@ const ScraperCard = memo(({
   const initialStatusSetRef = useRef(false);
   const previousItemsScraped = useRef(0);
   const pollingStartTimeRef = useRef<number | null>(null);
-  const POLLING_TIMEOUT_MS = 60000; // 1 minute timeout for polling if no progress
+  const lastItemUpdateRef = useRef<number | null>(null);
+  const stagnantCountRef = useRef(0);
+  const POLLING_TIMEOUT_MS = 180000; // 3 minute timeout for polling if no progress
+  const STAGNANT_THRESHOLD_MS = 45000; // 45 seconds with no new items is considered stagnant
+  const STAGNANT_CHECK_INTERVAL = 10000; // Check for stagnation every 10 seconds
+  const lastPollingCheckRef = useRef<number>(Date.now());
   
   const getDefaultUrl = () => {
     switch (title.toLowerCase()) {
@@ -63,12 +68,10 @@ const ScraperCard = memo(({
   const defaultUrl = getDefaultUrl();
   const isMpsScraper = title.toLowerCase() === "mps";
 
-  // Default depth based on scraper type
-  const defaultDepth = isMpsScraper ? "1" : "2";
-  // Default max items based on scraper type
-  const defaultMaxItems = isMpsScraper ? "50" : "100";
-  // Max depth constraint based on scraper type
-  const maxDepthAllowed = isMpsScraper ? 2 : 3;
+  // Adjusted default values for more comprehensive scraping
+  const defaultDepth = isMpsScraper ? "2" : "3"; // Increased from 2
+  const defaultMaxItems = isMpsScraper ? "150" : "200"; // Increased from 50/100
+  const maxDepthAllowed = isMpsScraper ? 3 : 5; // Increased from 2/3
   
   const { isLoading, urlRef, depthRef, maxItemsRef, handleSubmit } = useScrapeForm({
     title,
@@ -95,70 +98,101 @@ const ScraperCard = memo(({
       if (!jobId) return;
       
       try {
-        const { data, error } = await supabase
-          .from("scrape_jobs")
-          .select("status, items_scraped")
-          .eq("id", jobId)
-          .single();
+        const now = Date.now();
         
-        if (error) {
-          console.error("Error fetching job status:", error);
-          return;
-        }
-        
-        if (data) {
-          if (data.status !== jobStatus) {
-            console.log(`Job status changed from ${jobStatus} to ${data.status}`);
-            setJobStatus(data.status);
+        // Only do a full check if enough time has passed
+        if (now - lastPollingCheckRef.current >= 2000) {
+          lastPollingCheckRef.current = now;
+          
+          const { data, error } = await supabase
+            .from("scrape_jobs")
+            .select("status, items_scraped, error_message")
+            .eq("id", jobId)
+            .single();
+          
+          if (error) {
+            console.error("Error fetching job status:", error);
+            return;
           }
           
-          if (data.items_scraped !== undefined && data.items_scraped !== itemsScraped) {
-            console.log(`Items scraped changed from ${itemsScraped} to ${data.items_scraped}`);
-            setItemsScraped(data.items_scraped);
-            previousItemsScraped.current = data.items_scraped;
-            
-            // Reset timeout when making progress
-            if (pollingStartTimeRef.current !== null) {
-              pollingStartTimeRef.current = Date.now();
-            }
-          }
-          
-          // Check if we should stop polling
-          const isCompleted = data.status === "completed" || data.status === "failed" || data.status === "stopped";
-          
-          // Handle premature status changes
-          if (data.status === "completed" && data.items_scraped < 1) {
-            console.log("Job marked as completed but no items scraped, might be premature");
-            
-            // Wait for a few more polling attempts before giving up
-            if (pollingStartTimeRef.current && (Date.now() - pollingStartTimeRef.current < 10000)) {
-              return; // Keep polling for a bit in case items appear
-            }
-          }
-          
-          if (isCompleted) {
-            setIsPolling(false);
-            
-            // Show notification only if we actually scraped something
-            if (data.status === "completed" && data.items_scraped > 0) {
-              toast.success(`${title} scraper completed with ${data.items_scraped} items`);
-            } else if (data.status === "failed") {
-              toast.error(`${title} scraper failed`);
-            }
-          }
-          
-          // Check for timeout (no progress for a minute)
-          if (pollingStartTimeRef.current && (Date.now() - pollingStartTimeRef.current > POLLING_TIMEOUT_MS)) {
-            if (previousItemsScraped.current === data.items_scraped) {
-              console.log("Polling timeout reached with no progress, stopping polling");
-              setIsPolling(false);
+          if (data) {
+            // Check for status change
+            if (data.status !== jobStatus) {
+              console.log(`Job status changed from ${jobStatus} to ${data.status}`);
               
-              if (data.status === "running") {
-                // Job might be stuck, try to stop it
-                await stopScrapeJob(jobId);
-                toast.warning(`${title} scraper appears to be stuck, stopped polling`);
+              // If transitioning to completed or failed, show appropriate toast
+              if ((data.status === "completed" || data.status === "failed") && jobStatus === "running") {
+                if (data.status === "completed" && (data.items_scraped || 0) > 5) {
+                  toast.success(`${title} scraper completed with ${data.items_scraped} items`);
+                } else if (data.status === "failed" && data.error_message) {
+                  toast.error(`${title} scraper failed: ${data.error_message}`);
+                }
+              }
+              
+              setJobStatus(data.status);
+            }
+            
+            // Check for items scraped change
+            if (data.items_scraped !== undefined && data.items_scraped !== itemsScraped) {
+              console.log(`Items scraped changed from ${itemsScraped} to ${data.items_scraped}`);
+              
+              // If items increased, update the last item update time
+              if (data.items_scraped > itemsScraped) {
+                lastItemUpdateRef.current = Date.now();
+                stagnantCountRef.current = 0; // Reset stagnant counter
+              }
+              
+              setItemsScraped(data.items_scraped);
+              previousItemsScraped.current = data.items_scraped;
+            }
+            
+            // Check for stagnation (no new items in a while)
+            if (data.status === "running" && lastItemUpdateRef.current !== null) {
+              const timeSinceLastItem = now - lastItemUpdateRef.current;
+              
+              if (timeSinceLastItem > STAGNANT_THRESHOLD_MS) {
+                stagnantCountRef.current += 1;
+                
+                // Log stagnation warnings but don't auto-stop until timeout
+                if (stagnantCountRef.current >= 3 && stagnantCountRef.current < 6) {
+                  console.log(`Scraper appears to be stagnant for ${Math.round(timeSinceLastItem/1000)} seconds`);
+                  
+                  // Only show a toast warning once
+                  if (stagnantCountRef.current === 3) {
+                    toast.info(`${title} scraper hasn't found new items in a while but is still running`);
+                  }
+                }
               }
             }
+            
+            // Job is completed or failed, stop polling
+            const isCompleted = data.status === "completed" || data.status === "failed" || data.status === "stopped";
+            
+            // Check for jobs marked as completed but with no items - might be premature
+            if (data.status === "completed" && data.items_scraped < 3 && pollingStartTimeRef.current) {
+              console.log("Job marked as completed but very few items scraped, might be premature");
+              
+              // Wait for a few more polling attempts before accepting this status
+              if (Date.now() - pollingStartTimeRef.current < 15000) {
+                return; // Keep polling for a bit in case items appear
+              }
+            }
+            
+            if (isCompleted) {
+              setIsPolling(false);
+            }
+          }
+        }
+        
+        // Check for polling timeout (no progress for a long time)
+        if (pollingStartTimeRef.current && (Date.now() - pollingStartTimeRef.current > POLLING_TIMEOUT_MS)) {
+          console.log("Polling timeout reached, stopping polling");
+          setIsPolling(false);
+          
+          if (jobStatus === "running") {
+            // Job might be stuck, try to stop it
+            await stopScrapeJob(jobId);
+            toast.warning(`${title} scraper has been running for over 3 minutes with no completion. You can try with a smaller depth or wait for it to finish.`);
           }
         }
       } catch (error) {
@@ -172,13 +206,15 @@ const ScraperCard = memo(({
       console.log(`Starting polling for job ${scrapeJobId}`);
       setIsPolling(true);
       pollingStartTimeRef.current = Date.now();
+      lastItemUpdateRef.current = Date.now(); // Initialize last item update time
       previousItemsScraped.current = itemsScraped;
+      stagnantCountRef.current = 0;
       
       // Initial poll
       pollJobStatus(scrapeJobId);
       
-      // Set up polling interval
-      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 2000);
+      // Set up polling interval - more frequent polling (1.5 seconds)
+      pollingRef.current = window.setInterval(() => pollJobStatus(scrapeJobId), 1500);
     } else if (!isActiveJob && isPolling) {
       console.log("Stopping polling as job is no longer active");
       setIsPolling(false);
@@ -252,7 +288,7 @@ const ScraperCard = memo(({
               ref={depthRef}
             />
             <p className="text-xs text-muted-foreground">
-              Higher depth values will scrape more pages but take longer.
+              Higher depth values (1-{maxDepthAllowed}) will scrape more pages but take longer.
             </p>
           </div>
           
@@ -263,13 +299,13 @@ const ScraperCard = memo(({
               type="number" 
               defaultValue={defaultMaxItems} 
               min="10" 
-              max={isMpsScraper ? "100" : "200"} 
+              max={isMpsScraper ? "300" : "500"} 
               disabled={!enabled || isJobRunning} 
               className="bg-background"
               ref={maxItemsRef}
             />
             <p className="text-xs text-muted-foreground">
-              Maximum number of pages to scrape. Lower values prevent timeouts.
+              Maximum number of pages to scrape. Higher values capture more data.
             </p>
           </div>
         </form>

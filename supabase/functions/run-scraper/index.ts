@@ -22,10 +22,10 @@ const USER_AGENTS = [
   'Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
 ];
 
-const EDGE_FUNCTION_TIMEOUT_MS = 25000; // 25 seconds
-const MAX_ITEMS_PER_TYPE = 200;
+const EDGE_FUNCTION_TIMEOUT_MS = 50000; // Extended to 50 seconds
+const MAX_ITEMS_PER_TYPE = 500; // Increased max items
 const BATCH_SIZE = 10;
-const SAVE_INTERVAL_MS = 2500; // Save more frequently, every 2.5 seconds
+const SAVE_INTERVAL_MS = 2000; // More frequent saving
 
 function getValidItemType(scraperType: string): string {
   switch(scraperType) {
@@ -42,8 +42,8 @@ function getValidItemType(scraperType: string): string {
 function getMpUrls(): string[] {
   return [
     "https://www.althingi.is/thingmenn/althingismenn/",
-    "https://www.althingi.is/altext/cv/is/",  // Alternative URL for MP info
-    "https://www.althingi.is/thingmenn/",     // Main MPs section
+    "https://www.althingi.is/altext/cv/is/",
+    "https://www.althingi.is/thingmenn/",
   ];
 }
 
@@ -148,21 +148,27 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3,
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
+// Extract ALL text from a document without any filtering
 function extractAllTextFromDocument(doc: any): string {
   if (!doc) return "";
   
+  // Get the entire text content from the body
   const textContent = doc.body ? doc.body.textContent : doc.textContent;
   
+  // Only do minimal cleaning - keep all content but remove excessive whitespace
   return textContent
     ? textContent.replace(/\s+/g, ' ').trim()
     : "";
 }
 
+// Extract ALL text from raw HTML without any filtering
 function extractAllTextFromHtml(html: string): string {
   if (!html) return "";
   
+  // Simple regex to strip HTML tags but keep ALL text content
   const textContent = html.replace(/<[^>]*>/g, ' ');
   
+  // Only do minimal cleaning - keep all content but remove excessive whitespace
   return textContent.replace(/\s+/g, ' ').trim();
 }
 
@@ -196,12 +202,13 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   const validType = getValidItemType(scraperType);
   
-  const maxDepth = Math.min(config.depth || 2, 3);
-  const throttle = Math.max(config.throttle || 1000, 300);
-  const saveRawHtml = true;
-  const timeout = Math.min((config.timeout_seconds || 15) * 1000, 15000);
-  const exploreBreadth = Math.min(config.explore_breadth || 10, 10);
-  const maxItems = Math.min(config.max_items || 100, MAX_ITEMS_PER_TYPE);
+  // Use config parameters with higher defaults
+  const maxDepth = Math.min(config.depth || 3, 5); // Increased max depth
+  const throttle = Math.max(config.throttle || 800, 300); // Slightly faster throttle
+  const saveRawHtml = true; // Always save raw HTML
+  const timeout = Math.min((config.timeout_seconds || 20) * 1000, 25000); // Extended timeout
+  const exploreBreadth = Math.min(config.explore_breadth || 20, 30); // Increased link breadth
+  const maxItems = Math.min(config.max_items || 200, MAX_ITEMS_PER_TYPE); // Increased max items
   
   const { data: runningJobs } = await supabase
     .from("scrape_jobs")
@@ -209,7 +216,8 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     .in("status", ["running", "pending"])
     .neq("id", jobId);
   
-  if (runningJobs && runningJobs.length > 2) {
+  // Limit concurrent jobs to 3 instead of 2
+  if (runningJobs && runningJobs.length > 3) {
     await supabase
       .from("scrape_jobs")
       .update({
@@ -233,19 +241,20 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     );
   }
   
-  if (scraperType === "mps" && maxDepth > 2) {
+  // Only apply depth limits to MPs
+  if (scraperType === "mps" && maxDepth > 3) { // Increased limit for MPs
     await supabase
       .from("scrape_jobs")
       .update({
         status: "failed",
         completed_at: new Date().toISOString(),
-        error_message: "MP scraper is limited to depth 2 to avoid resource constraints."
+        error_message: "MP scraper is limited to depth 3 to avoid resource constraints."
       })
       .eq("id", jobId);
     
     return new Response(
       JSON.stringify({ 
-        error: "MP scraper is limited to depth 2. Please reduce the scrape depth." 
+        error: "MP scraper is limited to depth 3. Please reduce the scrape depth." 
       }),
       { 
         status: 400, 
@@ -260,23 +269,24 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   let itemsScraped = 0;
   let urlsToVisit: string[] = [];
   
+  // Get more starting URLs for MPs
   if (scraperType === "mps") {
-    urlsToVisit = getMpUrls().slice(0, 2);
+    urlsToVisit = getMpUrls();
   } else {
     const baseUrl = config.url || getBaseUrl(scraperType);
-    urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType).slice(0, 2)];
+    urlsToVisit = [baseUrl, ...getAdditionalStartUrls(scraperType)];
   }
   
+  // Ensure URLs are unique
   urlsToVisit = [...new Set(urlsToVisit)];
   
   const visitedUrls = new Set<string>();
   const scrapedItems: any[] = [];
   const failedUrls: {url: string, error: string}[] = [];
   
-  let mpProfiles: any[] = [];
-  
   const successfulResponses = new Map<string, {html: string, url: string}>();
   
+  // Update job status to running and record start time
   const startJobResult = await supabase
     .from("scrape_jobs")
     .update({
@@ -294,6 +304,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   let lastSaveTime = Date.now();
   let pendingItems: any[] = [];
   
+  // Improved batch saving with error handling and retries
   async function saveBatchToDb(items: any[], forceUpdate = false): Promise<boolean> {
     if (!items || items.length === 0) return true;
     
@@ -307,27 +318,68 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       try {
         console.log(`Saving batch of ${pendingItems.length} items to database...`);
         
-        const sanitizedItems = pendingItems.map(item => ({
-          ...item,
-          content: item.content ? item.content.replace(/\u0000/g, '') : item.content,
-          raw_html: item.raw_html ? item.raw_html.replace(/\u0000/g, '') : item.raw_html
-        }));
+        // Handle null bytes and extremely large content
+        const sanitizedItems = pendingItems.map(item => {
+          const sanitizedContent = item.content ? item.content.replace(/\u0000/g, '') : item.content;
+          const sanitizedHtml = item.raw_html ? item.raw_html.replace(/\u0000/g, '') : item.raw_html;
+          
+          return {
+            ...item,
+            // Truncate extremely large content if needed
+            content: sanitizedContent?.length > 1000000 ? sanitizedContent.substring(0, 1000000) : sanitizedContent,
+            raw_html: sanitizedHtml
+          };
+        });
         
-        const { error } = await supabase
-          .from("scraped_items")
-          .insert(sanitizedItems);
+        // Try inserting the batch, with retries
+        let success = false;
+        let attempts = 0;
+        const maxAttempts = 3;
         
-        if (error) {
-          console.error("Error saving batch to database:", error);
-          return false;
+        while (!success && attempts < maxAttempts) {
+          attempts++;
+          
+          try {
+            const { error } = await supabase
+              .from("scraped_items")
+              .insert(sanitizedItems);
+            
+            if (error) {
+              console.error(`Batch save attempt ${attempts} failed:`, error);
+              
+              if (attempts < maxAttempts) {
+                // Wait longer between retries
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+                continue;
+              }
+              
+              return false;
+            }
+            
+            success = true;
+          } catch (err) {
+            console.error(`Exception in batch save attempt ${attempts}:`, err);
+            
+            if (attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+              continue;
+            }
+            
+            return false;
+          }
         }
         
-        console.log(`Successfully saved ${pendingItems.length} items to database`);
-        lastSaveTime = currentTime;
-        pendingItems = []; // Clear pending items after successful save
-        return true;
+        if (success) {
+          console.log(`Successfully saved ${pendingItems.length} items to database`);
+          lastSaveTime = currentTime;
+          pendingItems = []; // Clear pending items after successful save
+          return true;
+        } else {
+          console.error(`Failed to save batch after ${maxAttempts} attempts`);
+          return false;
+        }
       } catch (error) {
-        console.error("Exception saving batch to database:", error);
+        console.error("Unexpected exception saving batch to database:", error);
         return false;
       }
     }
@@ -337,6 +389,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   
   let isTimedOut = false;
   
+  // Set timeout for function
   const timeoutId = setTimeout(async () => {
     console.log("Approaching function timeout, saving remaining data and completing job...");
     isTimedOut = true;
@@ -345,6 +398,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
       await saveBatchToDb([], true); // Force save any pending items
     }
     
+    // Use "completed" status if any items were scraped, even on timeout
     await supabase
       .from("scrape_jobs")
       .update({ 
@@ -364,6 +418,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   const scrapedItemsBatch: any[] = [];
   
   try {
+    // More frequent status updates
     const statusUpdateInterval = setInterval(async () => {
       if (itemsScraped > 0) {
         await supabase
@@ -372,28 +427,34 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           .eq("id", jobId);
         console.log(`Updated job status: ${itemsScraped} items scraped`);
       }
-    }, 2000);
+    }, 1500); // Every 1.5 seconds
     
+    // Process each starting URL
     for (const startUrl of urlsToVisit) {
       if (visitedUrls.has(startUrl) || isTimedOut) continue;
       
       let currentDepthUrls = [startUrl];
       console.log(`Starting with URL: ${startUrl}`);
       
+      // Process each depth level
       for (let depth = 0; depth < maxDepth && currentDepthUrls.length > 0 && !isTimedOut; depth++) {
         console.log(`Processing depth ${depth + 1}/${maxDepth}, ${currentDepthUrls.length} URLs in queue`);
         
         const nextDepthUrls: string[] = [];
         
-        const urlsToProcess = currentDepthUrls.slice(0, Math.min(20, currentDepthUrls.length));
+        // Process more URLs per depth (increased from 20)
+        const urlsToProcess = currentDepthUrls.slice(0, Math.min(50, currentDepthUrls.length));
         
+        // Process each URL at current depth
         for (const url of urlsToProcess) {
           if (isTimedOut) break;
           
+          // Force save more frequently
           if (Date.now() - lastSaveTime > SAVE_INTERVAL_MS) {
             await saveBatchToDb([], true); // Force save
           }
           
+          // Check if job is still active
           const jobActive = await isJobStillActive(jobId);
           if (!jobActive) {
             console.log(`Job ${jobId} is no longer active, stopping scrape`);
@@ -415,18 +476,21 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           if (visitedUrls.has(url)) continue;
           visitedUrls.add(url);
           
+          // Check if we've reached the maximum items limit
           if (itemsScraped >= maxItems) {
             console.log(`Reached maximum items limit (${maxItems}), stopping scrape`);
             break;
           }
           
           try {
+            // Throttle requests
             if (throttle > 0) {
               await new Promise(resolve => setTimeout(resolve, throttle));
             }
             
             console.log(`Fetching ${url}...`);
             
+            // Set up request headers
             const headers = {
               'User-Agent': getRandomUserAgent(),
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -441,6 +505,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               'Sec-Fetch-User': '?1',
             };
             
+            // Fetch the URL with retry logic
             const response = await fetchWithRetry(url, { 
               headers,
               signal: AbortSignal.timeout(timeout)
@@ -453,10 +518,13 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
+            // Get the HTML content
             const html = await response.text();
             
+            // Store successful response for fallback extraction
             successfulResponses.set(url, {html, url});
             
+            // Parse the HTML
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, "text/html");
             
@@ -466,12 +534,16 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               continue;
             }
             
+            // Extract ALL text content, with no filtering
             const allTextContent = extractAllTextFromDocument(doc);
             
-            const title = doc.querySelector("h1, .title, .name, header h2")?.textContent?.trim() || `Content from ${url}`;
+            // Get title or use URL if none found
+            const title = doc.querySelector("h1, .title, .name, header h2, title")?.textContent?.trim() || 
+                          `Content from ${url}`;
             
             const normalizedUrl = normalizeUrl(url, startUrl);
             
+            // Store minimal metadata
             const metadata: Record<string, any> = {
               pageType: validType,
               sourceUrl: url,
@@ -479,9 +551,11 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               textLength: allTextContent.length
             };
             
+            // Sanitize content to prevent storage issues
             const sanitizedContent = allTextContent.replace(/\u0000/g, '');
             const sanitizedHtml = html.replace(/\u0000/g, '');
             
+            // Create the item with ALL content
             const newItem = {
               title,
               content: sanitizedContent,
@@ -496,6 +570,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
             scrapedItemsBatch.push(newItem);
             itemsScraped++;
             
+            // Prepare to save batch if enough items
             batchCount++;
             if (batchCount >= BATCH_SIZE) {
               await saveBatchToDb(scrapedItemsBatch);
@@ -503,15 +578,18 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
               batchCount = 0;
             }
             
+            // Update job status
             await supabase
               .from("scrape_jobs")
               .update({ items_scraped: itemsScraped })
               .eq("id", jobId);
             
+            // Find more links to follow if we're not at max depth
             if (depth < maxDepth - 1 && !isTimedOut) {
               const links = doc.querySelectorAll("a");
               let linkCount = 0;
               
+              // Get more links (increased from exploreBreadth)
               for (let i = 0; i < links.length && linkCount < exploreBreadth && !isTimedOut; i++) {
                 const link = links[i];
                 const href = link.getAttribute("href");
@@ -520,6 +598,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
                 
                 const nextUrl = normalizeUrl(href, url);
                 
+                // Only follow links on althingi.is
                 if (!nextUrl.includes("althingi.is")) continue;
                 
                 if (!visitedUrls.has(nextUrl)) {
@@ -535,17 +614,21 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
           }
         }
         
-        currentDepthUrls = nextDepthUrls.slice(0, Math.min(30, nextDepthUrls.length));
+        // Prepare next depth URLs (increased from 30)
+        currentDepthUrls = nextDepthUrls.slice(0, Math.min(100, nextDepthUrls.length));
       }
     }
     
+    // Save any remaining items
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
     
+    // Clean up
     clearTimeout(timeoutId);
     clearInterval(statusUpdateInterval);
     
+    // Fallback extraction if no items were found via DOM parser
     if (scrapedItems.length === 0 && successfulResponses.size > 0) {
       console.log("No items scraped with DOM parser. Trying direct HTML extraction...");
       
@@ -587,6 +670,7 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
     console.log(`Scraped ${scrapedItems.length} items for ${scraperType}`);
     console.log(`Failed URLs: ${failedUrls.length}`);
     
+    // Complete the job
     const finalStatus = scrapedItems.length > 0 ? "completed" : failedUrls.length > 0 ? "completed" : "failed";
     const errorMessage = scrapedItems.length === 0 && failedUrls.length > 0 ? 
       `Failed to scrape any items, ${failedUrls.length} URLs failed` : null;
@@ -609,10 +693,12 @@ async function scrapeData(scraperType: string, config: any, jobId: string) {
   } catch (error) {
     console.error("Scraping error:", error);
     
+    // Try to save any captured items even on error
     if (scrapedItemsBatch.length > 0) {
       await saveBatchToDb(scrapedItemsBatch, true);
     }
     
+    // Mark job as completed if we got some items, otherwise failed
     await supabase
       .from("scrape_jobs")
       .update({ 
@@ -688,13 +774,14 @@ serve(async (req) => {
       );
     }
     
+    // Allow more concurrent jobs
     const { data: activeJobs } = await supabase
       .from("scrape_jobs")
       .select("id")
       .in("status", ["running", "pending"])
       .neq("id", jobId);
     
-    if (activeJobs && activeJobs.length >= 2) {
+    if (activeJobs && activeJobs.length >= 3) {
       await supabase
         .from("scrape_jobs")
         .update({ 
@@ -718,20 +805,22 @@ serve(async (req) => {
       );
     }
     
+    // Special handling for MPs
     if (type === "mps") {
       const safeConfig = { ...config };
       
-      if (safeConfig.depth > 2) {
-        safeConfig.depth = 2;
-        console.log("Limiting MPs scraper depth to 2");
+      // Increased limits for MP scraper
+      if (safeConfig.depth > 3) {
+        safeConfig.depth = 3;
+        console.log("Limiting MPs scraper depth to 3");
       }
       
-      if (!safeConfig.max_items || safeConfig.max_items > 100) {
-        safeConfig.max_items = 100;
-        console.log("Limiting MPs scraper to 100 items maximum");
+      if (!safeConfig.max_items || safeConfig.max_items > 200) { // Increased from 100
+        safeConfig.max_items = 200;
+        console.log("Limiting MPs scraper to 200 items maximum");
       }
       
-      safeConfig.throttle = Math.max(safeConfig.throttle || 1000, 500);
+      safeConfig.throttle = Math.max(safeConfig.throttle || 800, 500);
       
       try {
         const scrapeResult = await scrapeData(type, safeConfig, jobId);
