@@ -8,6 +8,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import Index from "./pages/Index";
 import ScraperPage from "./pages/ScraperPage";
 import SettingsPage from "./pages/SettingsPage";
+import DatabasePage from "./pages/DatabasePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,6 +24,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/scraper" element={<ScraperPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/database" element={<DatabasePage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

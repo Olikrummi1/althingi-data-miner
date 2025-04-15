@@ -31,6 +31,12 @@ const Header = () => {
               {t('scraper')}
             </Link>
             <Link 
+              to="/database" 
+              className={`text-gray-600 hover:text-althingi-blue ${isActive('/database') ? 'font-semibold text-althingi-blue' : ''}`}
+            >
+              {t('database')}
+            </Link>
+            <Link 
               to="/settings" 
               className={`text-gray-600 hover:text-althingi-blue ${isActive('/settings') ? 'font-semibold text-althingi-blue' : ''}`}
             >
