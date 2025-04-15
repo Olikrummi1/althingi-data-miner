@@ -1,7 +1,8 @@
 
-import React, { forwardRef, memo } from "react";
+import React, { memo } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useScrapeForm } from "@/hooks/useScrapeForm";
 
 type ScrapeConfigFormProps = {
   title: string;
@@ -9,22 +10,30 @@ type ScrapeConfigFormProps = {
   isJobRunning: boolean;
   defaultUrl: string;
   onScrape: (config: { url: string; depth: number; maxItems?: number }) => Promise<void>;
+  isMpsScraper?: boolean;
 };
 
-type ScrapeConfigFormRef = {
-  urlRef: React.RefObject<HTMLInputElement>;
-  depthRef: React.RefObject<HTMLInputElement>;
-  maxItemsRef: React.RefObject<HTMLInputElement>;
-};
-
-const ScrapeConfigForm = memo(forwardRef<ScrapeConfigFormRef, ScrapeConfigFormProps>(({ 
+export const ScrapeConfigForm = memo(({ 
   title, 
   enabled, 
   isJobRunning, 
-  defaultUrl 
-}, ref) => {
+  defaultUrl,
+  onScrape,
+  isMpsScraper
+}: ScrapeConfigFormProps) => {
+  const { urlRef, depthRef, maxItemsRef } = useScrapeForm({
+    title,
+    onScrape,
+    enabled,
+    defaultUrl
+  });
+
+  const defaultDepth = isMpsScraper ? "2" : "3";
+  const defaultMaxItems = isMpsScraper ? "150" : "200";
+  const maxDepthAllowed = isMpsScraper ? 3 : 5;
+
   return (
-    <div className="space-y-4">
+    <form id={`scrape-form-${title}`} onSubmit={(e) => e.preventDefault()} className="space-y-4">
       <div className="grid w-full items-center gap-1.5">
         <Label htmlFor={`url-${title}`}>URL</Label>
         <Input 
@@ -32,7 +41,7 @@ const ScrapeConfigForm = memo(forwardRef<ScrapeConfigFormRef, ScrapeConfigFormPr
           defaultValue={defaultUrl}
           disabled={!enabled || isJobRunning} 
           className="bg-background"
-          ref={ref ? (ref as any).urlRef : null}
+          ref={urlRef}
         />
       </div>
       
@@ -41,41 +50,36 @@ const ScrapeConfigForm = memo(forwardRef<ScrapeConfigFormRef, ScrapeConfigFormPr
         <Input 
           id={`depth-${title}`} 
           type="number" 
-          defaultValue="2" 
+          defaultValue={defaultDepth}
           min="1" 
-          max="5" 
+          max={maxDepthAllowed.toString()}
           disabled={!enabled || isJobRunning} 
           className="bg-background"
-          ref={ref ? (ref as any).depthRef : null}
+          ref={depthRef}
         />
-        {title.toLowerCase() === "mps" && (
-          <p className="text-xs text-gray-500 mt-1">
-            For MPs, use a lower depth (1-2) to avoid resource limits
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          Higher depth values (1-{maxDepthAllowed}) will scrape more pages but take longer.
+        </p>
       </div>
       
       <div className="grid w-full items-center gap-1.5">
-        <Label htmlFor={`maxitems-${title}`}>Max Items (optional)</Label>
+        <Label htmlFor={`maxitems-${title}`}>Max Items</Label>
         <Input 
           id={`maxitems-${title}`} 
           type="number" 
-          defaultValue={title.toLowerCase() === "mps" ? "100" : "200"} 
+          defaultValue={defaultMaxItems}
           min="10" 
-          max={title.toLowerCase() === "mps" ? "200" : "500"} 
+          max={isMpsScraper ? "300" : "500"}
           disabled={!enabled || isJobRunning} 
           className="bg-background"
-          ref={ref ? (ref as any).maxItemsRef : null}
+          ref={maxItemsRef}
         />
-        <p className="text-xs text-gray-500 mt-1">
-          Leave at default or increase to get more data (may increase time)
+        <p className="text-xs text-muted-foreground">
+          Maximum number of pages to scrape. Higher values capture more data.
         </p>
       </div>
-    </div>
+    </form>
   );
-}));
+});
 
 ScrapeConfigForm.displayName = 'ScrapeConfigForm';
-
-export { ScrapeConfigForm };
-export default ScrapeConfigForm;
