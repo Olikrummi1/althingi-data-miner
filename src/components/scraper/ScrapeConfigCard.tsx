@@ -1,7 +1,8 @@
+
 import React, { memo } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLanguage } from "@/contexts/LanguageContext";
-import ScrapeConfigForm from "@/components/scraper/ScrapeConfigForm";
+import { ScrapeConfigForm } from "@/components/scraper/ScrapeConfigForm";
 import ScrapeStatusBadge from "@/components/scraper/ScrapeStatusBadge";
 import ScrapeActionButton from "@/components/scraper/ScrapeActionButton";
 import ScrapeConfigToggle from "@/components/scraper/ScrapeConfigToggle";
